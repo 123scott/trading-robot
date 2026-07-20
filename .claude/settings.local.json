@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"/Users/admin/Desktop - admin’s MacBook Pro/AMARO\" 2>/dev/null || exit 0; git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0; if [ -n \"$(git status --porcelain)\" ]; then git add -A; git commit -m \"Auto-update from Claude Code session\" >/dev/null 2>&1; if git push origin main >/dev/null 2>&1; then echo \"{\\\"systemMessage\\\": \\\"Pushed changes to github.com/123scott/trading-robot\\\"}\"; else echo \"{\\\"systemMessage\\\": \\\"Auto-commit succeeded but push to GitHub failed (check network/auth)\\\"}\"; fi; fi",
+            "timeout": 30,
+            "statusMessage": "Auto-pushing changes to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}
