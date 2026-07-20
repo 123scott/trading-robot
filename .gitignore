@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+*.zip
+BOTTOOO.docx
+BOTTOOO.odt
