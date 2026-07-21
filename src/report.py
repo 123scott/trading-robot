@@ -75,10 +75,16 @@ def _last_known_price(symbol: str) -> Optional[float]:
         return _LAST_PRICE_CACHE[symbol]
     try:
         if market_data.source_for(symbol) == "binance":
-            candles = market_data.fetch_candles(symbol, interval="1d", limit=1)
+            candles = market_data.fetch_candles(symbol, interval="1d", limit=5)
         else:
             candles = market_data.fetch_candles(symbol, interval="1d", start="2026-01-01")
-        price = candles[-1].close if candles else None
+        # Today's daily candle can still be in progress (close=NaN) if the
+        # trading day hasn't closed yet -- walk back to the last complete one.
+        price = None
+        for c in reversed(candles):
+            if c.close == c.close:  # NaN != NaN
+                price = c.close
+                break
     except Exception:
         price = None
     _LAST_PRICE_CACHE[symbol] = price
