@@ -10,14 +10,21 @@ Position sizing: fixed $10,000 notional per trade (quantity = notional /
 entry price), so PnL $ is directly comparable across assets with very
 different price scales.
 
+**Revision note:** this replaces an earlier version of this report. XAUUSD
+was re-run with a larger historical dataset (201 raw / 136 memory trades,
+up from 110/19), and GBPUSD/USDJPY -- which had briefly been dropped from
+the working ledger by an out-of-band rerun -- were restored from git
+history and merged back in. The previously reported XAUUSD memory-mode win
+rate of 88.9% is superseded by the current 63.6%.
+
 ## Comparison Table
 
 | Symbol | Mode   | Trades | Skips | Net PnL $  | Net PnL % | Win %  | Profit Factor | Max DD % | Memory Efficiency % |
 |--------|--------|-------:|------:|-----------:|----------:|-------:|---------------:|---------:|---------------------:|
 | GBPUSD | raw    |    107 |     0 |     148.73 |      1.49 |   34.0 |            1.04 |    11.30 |                    -- |
 | GBPUSD | memory |      3 |    52 |     126.09 |      1.26 |  100.0 |           undef |     0.00 |                 100.0 |
-| XAUUSD | raw    |    110 |     0 |   8,796.82 |     87.97 |   38.2 |            2.44 |     9.30 |                    -- |
-| XAUUSD | memory |     19 |    46 |  13,858.45 |    138.58 |   88.9 |           18.48 |     7.93 |                 100.0 |
+| XAUUSD | raw    |    201 |     0 |  16,064.98 |    160.65 |   39.0 |            2.47 |     9.08 |                    -- |
+| XAUUSD | memory |    136 |   114 |  45,701.03 |    457.01 |   63.6 |            8.25 |    12.93 |                 100.0 |
 | USDJPY | raw    |    117 |     0 |   3,433.04 |     34.33 |   50.0 |            2.27 |    13.50 |                    -- |
 | USDJPY | memory |     15 |    51 |   2,419.72 |     24.20 |   85.7 |            8.97 |     2.55 |                 100.0 |
 
@@ -29,39 +36,51 @@ Definitions:
 
 ## Critical Caveat: Unrealized Open Positions
 
-Every memory-mode run ended the ~8-year backtest still holding an open
-position -- memory kept vetoing the exit signal, in GBPUSD's case for over
-4 years straight. The table above only reflects *realized* PnL, which
-hides this. Marked to the last known price:
+Every memory-mode run (and both raw-mode runs still holding a position at
+data-end) ended still holding an open position -- memory kept vetoing the
+exit signal, in GBPUSD's case for over 4 years straight. The table above
+only reflects *realized* PnL, which hides this. Marked to the last known
+completed daily close:
 
-| Symbol (memory) | Unrealized PnL | Total PnL % (realized + open) |
-|------------------|----------------:|-------------------------------:|
-| GBPUSD           |         -334.95 |                          -2.09 |
-| XAUUSD           |       -1,489.96 |                         123.68 |
-| USDJPY           |         +504.35 |                          29.24 |
+| Symbol | Mode   | Unrealized PnL $ | Total PnL % (realized + open) |
+|--------|--------|------------------:|-------------------------------:|
+| GBPUSD | raw    |            +34.82 |                            1.84 |
+| GBPUSD | memory |           -326.24 |                           -2.00 |
+| XAUUSD | raw    |         -1,056.34 |                          150.09 |
+| XAUUSD | memory |         -1,414.47 |                          442.87 |
+| USDJPY | raw    |           +227.33 |                           36.60 |
+| USDJPY | memory |           +514.96 |                           29.35 |
 
 **GBPUSD memory mode is not actually a winner.** It bought once on
 2021-08-02 at 1.39 and then skipped every single subsequent death-cross
-exit signal through mid-2026, because price kept revisiting price zones
-near a 2021 realized loss. Its "100% win rate / 0% drawdown" reflects
-having closed exactly one trade, not a working filter. This is a real
-limitation of the current memory heuristic (flat +/-1% price-zone
-matching, no time decay on old losses, no cap on how long a position can
-be held hostage by stale warnings) -- not a bug, but something to fix
-before trusting this asset's numbers.
+exit signal through mid-2026, because price kept revisiting zones near a
+2021 realized loss. Its "100% win rate / 0% drawdown" reflects having
+closed exactly one trade, not a working filter. This is a real limitation
+of the current memory heuristic (flat +/-1% price-zone matching, no time
+decay on old losses, no cap on how long a position can be held hostage by
+stale warnings) -- not a bug, but something to fix before trusting this
+asset's numbers.
+
+**XAUUSD memory mode's headline 457% Net PnL is also not the full story.**
+It's sitting on a real -$1,414 unrealized loss on its currently open
+position; total return including that mark is 442.87%, still very strong
+but not the uncomplicated number the realized-only column suggests. Its
+63.6% win rate (not the previously reported 88.9%, which was from a
+smaller/older dataset) is the more representative figure going forward.
 
 ## Optimal Structural Fit: XAUUSD
 
 Ranked by total-return/max-drawdown ratio (memory mode, including the
 unrealized mark):
 
-- **XAUUSD**: 123.68% total PnL, 7.93% max DD, ratio ~15.6, profit factor
-  18.48, 19 trades (stayed active).
-- **USDJPY**: 29.24% total PnL, 2.55% max DD, ratio ~11.5, solid
-  active runner-up.
-- **GBPUSD**: -2.09% total PnL once marked to market -- flag for review
+- **XAUUSD**: 442.87% total PnL, 12.93% max DD, ratio ~34.2, profit factor
+  8.25, 136 trades (highest trade count -- most statistically meaningful
+  of the three, though still self-selected by the memory filter).
+- **USDJPY**: 29.35% total PnL, 2.55% max DD, ratio ~11.5, smallest
+  drawdown of the three, solid active runner-up.
+- **GBPUSD**: -2.00% total PnL once marked to market -- flag for review
   before any live use; the strategy/memory combination effectively froze
-  on this pair.
+  on this pair for years.
 
 ## What Was Built
 
@@ -71,6 +90,6 @@ unrealized mark):
 - `src/market_data.py` -- dispatcher routing `--symbol` to the correct source.
 - `src/trading_robot.py` -- notional-based position sizing, date-range support.
 - `src/replay.py` -- CLI: `--symbol`, `--start`, `--end`, `--notional`, plus original `--raw` / `--memory` / `--reset`.
-- `src/report.py` -- this report's generator, including the open-position mark-to-market fix.
+- `src/report.py` -- this report's generator; also fixes an unrealized-PnL bug where today's still-in-progress daily candle (NaN close) was read instead of the last completed one.
 
 Original BTCUSDT `--raw`/`--memory` flow via Binance confirmed unchanged.
