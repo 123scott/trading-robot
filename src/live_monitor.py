@@ -16,9 +16,10 @@ Going from this to real live trading would require: authenticated Deriv
 API tokens, an order-management/execution layer, position reconciliation,
 and real risk controls -- none of which exist here, deliberately.
 
-Usage:
-    python -m src.replay --paper --symbol XAUUSD_DERIV
-    python -m src.replay --paper --symbol XAUUSD_DERIV --max-seconds 60   # for smoke-testing
+Usage (equivalent -- pick either):
+    python -m src.replay --paper --symbol XAUUSD_DERIV --notional 100
+    python -m src.live_monitor --paper --symbol XAUUSD_DERIV --notional 100
+    python -m src.live_monitor --paper --max-seconds 60   # bounded run, for smoke-testing
 """
 
 from __future__ import annotations
@@ -166,3 +167,23 @@ async def run_paper_mode(symbol: str = "XAUUSD_DERIV", notional: float = 10_000.
             pass
 
     log("[PAPER MODE] Stopped.")
+
+
+def _cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Live Deriv forward-testing (paper trading only -- no real orders).")
+    parser.add_argument("--paper", action="store_true", help="Required, for symmetry with `replay.py --paper`.")
+    parser.add_argument("--symbol", default="XAUUSD_DERIV")
+    parser.add_argument("--notional", type=float, default=10_000.0,
+                         help="Simulated per-trade dollar notional for paper PnL logging (e.g. --notional 100 "
+                              "to match a small demo account balance). This does NOT translate directly into a "
+                              "real MT5 lot size -- see src/mt5_executor.py's calc_lot_size for that.")
+    parser.add_argument("--max-seconds", type=float, default=None, help="Stop after N seconds (omit to run until Ctrl+C).")
+    args = parser.parse_args()
+
+    asyncio.run(run_paper_mode(symbol=args.symbol, notional=args.notional, max_seconds=args.max_seconds))
+
+
+if __name__ == "__main__":
+    _cli()
