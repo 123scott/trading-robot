@@ -21,6 +21,13 @@ Conventions (stated explicitly since they affect the numbers):
   - Memory Efficiency = % of raw-mode's realized LOSS trades that
     memory-mode converted to SKIP at that same signal timestamp. Requires
     a --raw run to exist for the symbol first; otherwise reported as "--".
+  - Sharpe/Sortino are TRADE-LEVEL, not bar-level: per-trade return =
+    pnl / notional, annualized by sqrt(trades_per_year), where
+    trades_per_year = trade_count / (years spanned by first->last trade).
+    This is a standard adaptation for irregularly-timed trade sequences,
+    but it means results with very few trades are not statistically
+    meaningful -- treat n<10 with real skepticism. Risk-free rate = 0.
+    Sortino uses downside deviation (target = 0) in place of full stdev.
 
 Usage:
     python -m src.report --symbols GBPUSD,XAUUSD,USDJPY
@@ -30,7 +37,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import statistics
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional
 
 from src import market_data
@@ -55,6 +64,8 @@ class ModeMetrics:
     notional: float = 10_000.0
     open_position: bool = False
     unrealized_pnl: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
 
     @property
     def total_pnl(self) -> float:
@@ -108,6 +119,28 @@ def _memory_efficiency(symbol: str, all_rows: List[dict]) -> Optional[float]:
     return converted / len(raw_losses) * 100
 
 
+def _sharpe_sortino(sells: List[dict], notional: float) -> tuple:
+    """Trade-level, annualized Sharpe and Sortino (risk-free rate = 0). See module docstring for methodology."""
+    if len(sells) < 2 or notional <= 0:
+        return None, None
+
+    returns = [float(r["pnl"]) / notional for r in sells]
+    timestamps = sorted(datetime.fromisoformat(r["timestamp"]) for r in sells)
+    years = (timestamps[-1] - timestamps[0]).total_seconds() / (365.25 * 24 * 3600)
+    if years <= 0:
+        return None, None
+    trades_per_year = len(sells) / years
+
+    mean_r = statistics.mean(returns)
+    stdev_r = statistics.pstdev(returns)
+    sharpe = (mean_r / stdev_r * (trades_per_year ** 0.5)) if stdev_r > 0 else None
+
+    downside_dev = (statistics.mean(min(r, 0.0) ** 2 for r in returns)) ** 0.5
+    sortino = (mean_r / downside_dev * (trades_per_year ** 0.5)) if downside_dev > 0 else None
+
+    return sharpe, sortino
+
+
 def compute_metrics(symbol: str, mode: str, notional: float, all_rows: List[dict]) -> ModeMetrics:
     rows = [r for r in all_rows if r["symbol"] == symbol and r["mode"] == mode]
     buys = [r for r in rows if r["action"] == "BUY"]
@@ -139,6 +172,7 @@ def compute_metrics(symbol: str, mode: str, notional: float, all_rows: List[dict
             max_dd = max(max_dd, (peak - equity) / peak * 100)
 
     mem_eff = _memory_efficiency(symbol, all_rows) if mode == "memory" else None
+    sharpe, sortino = _sharpe_sortino(sells, notional)
 
     # A dangling BUY with no matching SELL means the backtest ended still
     # holding a position -- its PnL is unrealized and NOT in net_pnl above.
@@ -158,6 +192,7 @@ def compute_metrics(symbol: str, mode: str, notional: float, all_rows: List[dict
         net_pnl=net_pnl, net_pnl_pct=net_pnl_pct, win_rate_pct=win_rate,
         profit_factor=profit_factor, max_drawdown_pct=max_dd, memory_efficiency_pct=mem_eff,
         notional=notional, open_position=open_position, unrealized_pnl=unrealized_pnl,
+        sharpe_ratio=sharpe, sortino_ratio=sortino,
     )
 
 
@@ -167,7 +202,7 @@ def print_comparison_table(symbols: List[str], notional: float = 10_000.0) -> Li
 
     header = (
         f"{'Symbol':8} {'Mode':8} {'Trades':7} {'Skips':6} {'Net PnL $':>12} {'Net PnL %':>10} "
-        f"{'Win %':>7} {'ProfitFactor':>13} {'Max DD %':>9} {'MemEff %':>9}"
+        f"{'Win %':>7} {'ProfitFactor':>13} {'Max DD %':>9} {'MemEff %':>9} {'Sharpe':>8} {'Sortino':>8}"
     )
     print(header)
     print("-" * len(header))
@@ -178,9 +213,11 @@ def print_comparison_table(symbols: List[str], notional: float = 10_000.0) -> Li
             results.append(m)
             pf = f"{m.profit_factor:.2f}" if m.profit_factor is not None else "undef"
             me = f"{m.memory_efficiency_pct:.1f}" if m.memory_efficiency_pct is not None else "--"
+            sh = f"{m.sharpe_ratio:.2f}" if m.sharpe_ratio is not None else "--"
+            so = f"{m.sortino_ratio:.2f}" if m.sortino_ratio is not None else "--"
             print(
                 f"{m.symbol:8} {m.mode:8} {m.trades:7} {m.skips:6} {m.net_pnl:12,.2f} {m.net_pnl_pct:10.2f} "
-                f"{m.win_rate_pct:7.1f} {pf:>13} {m.max_drawdown_pct:9.2f} {me:>9}"
+                f"{m.win_rate_pct:7.1f} {pf:>13} {m.max_drawdown_pct:9.2f} {me:>9} {sh:>8} {so:>8}"
             )
             if m.open_position:
                 mark = f"{m.unrealized_pnl:+,.2f}" if m.unrealized_pnl is not None else "unknown (price fetch failed)"

@@ -1,3 +1,6 @@
 pandas
 numpy
 requests
+yfinance
+websockets
+certifi

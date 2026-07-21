@@ -18,6 +18,12 @@ Both modes log every decision to data/ledger.csv, so the ledger accumulates
 real trade history across runs regardless of mode. Only "memory" mode reads
 that history back and acts on it -- "raw" mode's trading behaviour is
 completely unaffected by memory, by design.
+
+Spread-aware symbols (currently XAUUSD_DERIV) pay a fill-price cost on
+every trade: BUY fills at signal_price + spread/2, SELL fills at
+signal_price - spread/2 (market_data.spread_for()). Signal detection and
+memory zone-matching still operate on the underlying quote price -- only
+the recorded fill/PnL reflects the spread.
 """
 
 from __future__ import annotations
@@ -52,8 +58,11 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
 
     source = market_data.source_for(symbol)
     interval = interval or market_data.default_interval_for(symbol)
+    spread = market_data.spread_for(symbol)
     range_desc = f"{start} -> {end or 'present'}" if start else f"most recent {limit} bars"
     log(f"Fetching real {symbol} {interval} candles from {source} ({range_desc})...")
+    if spread:
+        log(f"Spread modeling enabled: approx {spread:.4f} round-trip (buys fill +{spread/2:.4f}, sells fill -{spread/2:.4f})")
     candles = market_data.fetch_candles(symbol=symbol, interval=interval, limit=limit, start=start, end=end)
     log(f"Fetched {len(candles)} candles ({_fmt_time(candles[0].open_time)} -> {_fmt_time(candles[-1].open_time)})\n")
 
@@ -90,19 +99,21 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
             continue
 
         if final_action == "BUY":
+            fill_price = intent.price + spread / 2
             tracker.apply(Action.BUY)
-            open_entry_price = intent.price
-            open_quantity = notional / intent.price
-            memory.record_trade(symbol, "BUY", intent.price, round(open_quantity, 6), intent.reason, mode, "OPEN", 0.0, ts)
+            open_entry_price = fill_price
+            open_quantity = notional / fill_price
+            memory.record_trade(symbol, "BUY", fill_price, round(open_quantity, 6), intent.reason, mode, "OPEN", 0.0, ts)
             trades += 1
-            log(f"  => BUY executed @ {intent.price:.5f} (qty {open_quantity:.6f}, notional ${notional:,.2f}). Position opened.\n")
+            log(f"  => BUY executed @ {fill_price:.5f} (qty {open_quantity:.6f}, notional ${notional:,.2f}). Position opened.\n")
 
         elif final_action == "SELL":
-            qty = open_quantity or (notional / intent.price)
-            pnl = (intent.price - open_entry_price) * qty if open_entry_price is not None else 0.0
+            fill_price = intent.price - spread / 2
+            qty = open_quantity or (notional / fill_price)
+            pnl = (fill_price - open_entry_price) * qty if open_entry_price is not None else 0.0
             tracker.apply(Action.SELL)
             outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
-            memory.record_trade(symbol, "SELL", intent.price, round(qty, 6), intent.reason, mode, outcome, pnl, ts)
+            memory.record_trade(symbol, "SELL", fill_price, round(qty, 6), intent.reason, mode, outcome, pnl, ts)
             trades += 1
 
             if outcome == "WIN":
@@ -114,7 +125,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
                 log("  -> Recorded a new learnings.md warning for this loss zone.")
 
             total_pnl += pnl
-            log(f"  => SELL executed @ {intent.price:.5f} (qty {qty:.6f}). Closed trade PnL: {pnl:.2f} ({outcome}).\n")
+            log(f"  => SELL executed @ {fill_price:.5f} (qty {qty:.6f}). Closed trade PnL: {pnl:.2f} ({outcome}).\n")
             open_entry_price = None
             open_quantity = None
 
