@@ -4,3 +4,4 @@ __pycache__/
 *.zip
 BOTTOOO.docx
 BOTTOOO.odt
+.claude/settings.local.json
