@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 
-from src.data_binance import Candle
+from src.candle import Candle
 
 
 class CrossDirection(Enum):
