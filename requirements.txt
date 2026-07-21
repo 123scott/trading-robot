@@ -4,3 +4,5 @@ requests
 yfinance
 websockets
 certifi
+python-dotenv
+MetaTrader5; sys_platform == "win32"
