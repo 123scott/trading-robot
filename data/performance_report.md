@@ -6,105 +6,117 @@ trade history.
 **Data source split (confirmed direction):**
 - **Yahoo Finance daily candles, 2018-01-01 -> present** is the dataset of
   record for all statistical stress testing (Sharpe Ratio, Sortino, Monte
-  Carlo). It has a deep enough trade sample (55 closed raw trades for
-  XAUUSD) to support these calculations meaningfully.
+  Carlo).
 - **Deriv's public WebSocket API (`frxXAUUSD`)** is used exclusively for
   the live-monitoring / paper-trading execution engine (`src/live_monitor.py`,
   `--paper`), to validate real-time spread handling and execution behavior
   against Deriv's actual live quotes -- not as a stress-test data source.
-  (Deriv's historical API only serves ~1 year of daily data regardless of
-  requested start date, confirmed by direct probing, so it was never a
-  candidate for the 2018-present statistical work anyway.)
 
-## Data Integrity Note (still relevant, read once)
+## Memory Decay Fix (read this first -- it changed every memory-mode number below)
 
-`data/ledger.csv` had accumulated duplicate rows for XAUUSD from repeated
-backtest reruns without a reset in between (91 duplicate raw rows, 65
-duplicate memory rows), which had inflated an earlier version of this
-report to a false 201 raw / 136 memory trade count and a fake 457% memory
-return. The ledger and `data/learnings.md` were fully deduplicated and
-every backtest below was rerun from a clean reset. **XAUUSD's verified
-correct figures: 110 raw / 19 memory trades.**
+The memory system had a real bug: once enough losses accumulated for a
+symbol, it could skip every exit signal **forever**. GBPUSD memory mode
+bought once in 2021 and then skipped 52 straight death-crosses through
+mid-2026, never closing the position. Fixed by adding a decay window
+(`MEMORY_DECAY_DAYS` in `src/memory.py`) -- matches older than the window
+no longer block a trade.
 
-## Comparison Table (all Yahoo Finance, 2018-present)
+**This required picking a window, and the choice matters a lot.** I swept
+90/180/365/730 days on XAUUSD and USDJPY before choosing:
+
+| Decay window | XAUUSD memory PnL | USDJPY memory PnL (raw = $3,433) |
+|---|---:|---:|
+| 90 days | +$9,259 | +$2,156 |
+| 180 days | +$9,259 | +$1,774 |
+| 365 days (**shipped default**) | +$9,580 | +$481 |
+| 730 days | +$10,367 | +$777 |
+
+**The important finding isn't the window -- it's that USDJPY's memory
+mode loses money at every window tested, all of them worse than just
+running raw with no memory at all.** XAUUSD benefits from memory at every
+window. This means "skip a setup that lost before" is a good heuristic
+for XAUUSD's crossover behavior and a bad one for USDJPY's -- the earlier
+report's 85.7% USDJPY memory win rate was never real skill, it was a
+side effect of the freeze bug producing a tiny, accidentally-lucky trade
+sample. **Do not run memory mode live on USDJPY without investigating
+this further; raw mode is currently the better choice for that pair.**
+
+365 days was picked as a defensible middle ground (not proven optimal --
+it's a module constant, retune and rerun both modes if you revisit it).
+
+## Comparison Table (all Yahoo Finance, 2018-present, 365-day decay)
 
 | Symbol | Mode | Trades | Skips | Net PnL $ | Net PnL % | Win % | Profit Factor | Max DD % | Mem Eff % | Sharpe | Sortino |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | GBPUSD | raw | 107 | 0 | 148.73 | 1.49 | 34.0 | 1.04 | 11.30 | -- | 0.03 | 0.06 |
-| GBPUSD | memory | 3 | 52 | 126.09 | 1.26 | 100.0 | undef | 0.00 | 100.0 | -- | -- |
+| GBPUSD | memory | 81 | 13 | 493.05 | 4.93 | 37.5 | 1.15 | 11.65 | 28.6 | 0.11 | 0.21 |
 | **XAUUSD** | **raw** | **110** | **0** | **8,796.82** | **87.97** | **38.2** | **2.44** | **9.30** | -- | **0.72** | **2.21** |
-| **XAUUSD** | **memory** | **19** | **46** | **13,858.45** | **138.58** | **88.9** | **18.48** | **7.93** | **100.0** | **1.13** | **6.45** |
+| **XAUUSD** | **memory** | **105** | **3** | **9,579.87** | **95.80** | **40.4** | **2.71** | **9.30** | **8.8** | **0.79** | **2.56** |
 | USDJPY | raw | 117 | 0 | 3,433.04 | 34.33 | 50.0 | 2.27 | 13.50 | -- | 0.68 | 1.83 |
-| USDJPY | memory | 15 | 51 | 2,419.72 | 24.20 | 85.7 | 8.97 | 2.55 | 100.0 | 1.30 | 4.70 |
+| USDJPY | memory | 81 | 18 | 480.87 | 4.81 | 45.0 | 1.17 | 13.50 | 27.6 | 0.11 | 0.18 |
 
 Sharpe/Sortino are trade-level (return = pnl/notional per trade), annualized
-by sqrt(trades_per_year) inferred from the span between each symbol's first
-and last trade, risk-free rate = 0. `--` = fewer than 2 closed trades, not
-computable.
+by sqrt(trades_per_year), risk-free rate = 0.
 
-## XAUUSD Monte Carlo Stress Test (full 2018-present Yahoo dataset, primary result)
+Note the **much larger memory-mode trade counts now (81-105, up from
+3-19)** -- these are also statistically better samples than before, not
+just decay-adjusted ones; the freeze bug had been silently starving the
+memory-mode backtests of trades.
 
-Bootstrap resampling with replacement, 5,000 iterations per mode, drawn
-from the real closed-trade PnL distribution. Methodology detail in
-`src/monte_carlo.py`.
+## XAUUSD Monte Carlo Stress Test (post-fix, primary result)
+
+Bootstrap resampling with replacement, 5,000 iterations, drawn from the
+real closed-trade PnL distribution. Methodology in `src/monte_carlo.py`.
 
 | Mode | Real closed trades | Actual PnL % | Actual Max DD % | 95% CI PnL % | 95% CI Max DD % | P(net loss) |
 |---|---:|---:|---:|---|---|---:|
 | raw | 55 | +87.97 | 9.30 | [+10.68%, +172.56%] | [4.76%, 27.98%] | 1.1% |
-| memory | 9 | +138.58 | 7.93 | [+48.91%, +232.27%] | [0.00%, 15.16%] | 0.0% |
+| memory | 52 | +95.80 | 9.30 | [+15.77%, +184.47%] | [4.19%, 25.80%] | 0.9% |
 
-**Raw mode's 55-trade sample is the statistically solid result here**: a
-95% CI of [+10.68%, +172.56%] on PnL and [4.76%, 27.98%] on max drawdown,
-with only a 1.1% chance of a net loss across 5,000 resampled trade
-orderings. That's a meaningful sequence-risk read.
+Memory mode's sample size (52 closed trades) is now close to raw's (55)
+and the two 95% CIs overlap heavily -- memory's edge over raw for XAUUSD
+is real but modest, not the dramatic gap the buggy version implied.
 
-**Memory mode's 9-trade sample is directionally encouraging but still
-thin** -- the CI is wide relative to the raw sample, and 9 trades is not
-enough to fully trust the tighter-looking drawdown bound. Read it as "the
-memory filter hasn't hurt risk-adjusted return in this sample," not as a
-proven lower-drawdown guarantee.
-
-## Unrealized Open-Position Marks (still applies)
+## Unrealized Open-Position Marks
 
 | Symbol | Mode | Unrealized PnL $ | Total PnL % (realized + open) |
 |---|---|---:|---:|
-| GBPUSD | raw | +12.73 | 1.61 |
-| GBPUSD | memory | -347.54 | -2.21 |
-| USDJPY | raw | +219.60 | 36.53 |
-| USDJPY | memory | +507.00 | 29.27 |
-| XAUUSD | memory | -1,421.64 | 124.37 |
-
-GBPUSD memory mode remains a net loser once marked to market (-2.21%).
-XAUUSD memory mode's total return including the open-position mark is
-124.37%, still very strong but below the nominal 138.58% realized figure.
+| GBPUSD | raw | -12.60 | 1.36 |
+| GBPUSD | memory | +138.99 | 6.32 |
+| USDJPY | raw | +250.10 | 36.83 |
+| USDJPY | memory | +1,142.06 | 16.23 |
+| XAUUSD | memory | -1,404.77 | 81.75 |
 
 ## Live Execution Validation on Deriv (`--paper`, not a stress-test input)
 
-`python -m src.replay --paper --symbol XAUUSD_DERIV` connects to Deriv's
+`python -m src.live_monitor --paper --symbol XAUUSD_DERIV` (equivalently
+`python -m src.replay --paper --symbol XAUUSD_DERIV`) connects to Deriv's
 live WebSocket tick feed, aggregates ticks into daily candles, and runs
 the same crossover + memory decision logic used in backtesting -- logging
 what it would do to `data/paper_trades.csv`. **It does not place real
 orders**; there is no broker authentication or order-execution code in
-this project.
+this project's Deriv path.
 
-Verified working end-to-end against Deriv's live feed: received real
-ticks with live bid/ask (e.g. bid 4056.31 / ask 4057.04). When a real
-bid/ask is available from the live tick (unlike historical candles, which
-only carry a single quote), paper mode fills at the real ask (buys) /
-real bid (sells) rather than an approximated spread -- this is the
-"validate real-time spreads and execution" role Deriv plays here.
+Reliability fix this round: the monitor previously crashed outright on a
+WebSocket keepalive timeout (observed in testing -- a real dropped
+connection killed the whole process). It now reconnects automatically
+with exponential backoff, which is necessary for genuine continuous
+background operation.
 
-For reference only (not used in the stress-test numbers above): a short
-historical run against Deriv's ~1-year `frxXAUUSD` window produced 6 raw
-/ 2 memory closed trades, both too few to support Sharpe/Monte Carlo
-conclusions -- which is exactly why that role has moved to Yahoo.
+## MT5 Execution Module (separate track, Windows-only, untested here)
+
+`src/mt5_executor.py` -- connection, lot sizing, order placement/closing
+for a real MT5 terminal (demo-account-only by default; refuses real-money
+accounts unless explicitly overridden). The `MetaTrader5` Python package
+has no macOS/Linux build (verified: `pip install MetaTrader5` fails
+outright here), so none of this has been executed, only reviewed against
+the documented API. Run `python -m src.mt5_executor` on the actual
+Windows/MT5 machine first to validate the connection before trusting
+anything else in that module.
 
 ## What Was Built This Round
 
-- `src/data_deriv.py` -- Deriv public WebSocket data source: historical candles (`fetch_deriv_candles`) and live tick streaming (`stream_deriv_ticks`), no authentication required for market data.
-- `src/market_data.py` -- extended with `XAUUSD_DERIV`, plus spread-aware fill pricing (`spread_for`).
-- `src/trading_robot.py` -- applies spread at execution for spread-aware symbols (buys fill high, sells fill low).
-- `src/report.py` -- added trade-level annualized Sharpe and Sortino ratios.
-- `src/monte_carlo.py` (new) -- bootstrap-resampling stress test, 95% CI for Max Drawdown and Total PnL.
-- `src/live_monitor.py` (new) + `--paper` flag in `replay.py` -- live Deriv forward-testing, paper-only, no order execution, uses real live bid/ask for fills.
-- Fixed a ledger-duplication bug that had inflated XAUUSD's prior reported numbers.
+- `src/memory.py` -- added a decay window so old losses stop permanently blocking trades; added a consecutive-skip-streak alert.
+- `src/live_monitor.py` -- reconnect-with-backoff resilience; standalone `python -m src.live_monitor --paper` CLI.
+- Fixed a real bug where the decay window's default was bound at function-definition time, making it silently unconfigurable.
+- Reran every Yahoo-based memory backtest and Monte Carlo simulation post-fix; numbers above are current.

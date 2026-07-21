@@ -8,3 +8,4 @@ BOTTOOO.odt
 .env
 .env.*
 !.env.example
+*.log

@@ -55,6 +55,37 @@ def _log_paper_trade(symbol: str, action: str, price: float, quantity: float,
         csv.writer(f).writerow([ts, symbol, action, f"{price:.5f}", quantity, reason, "paper", outcome, f"{pnl:.2f}"])
 
 
+RECONNECT_BASE_DELAY = 2.0
+RECONNECT_MAX_DELAY = 60.0
+
+
+async def _run_stream_with_reconnect(ticker: str, on_tick, stop_event: asyncio.Event, log) -> None:
+    """
+    Wraps stream_deriv_ticks with reconnect-on-drop + exponential backoff
+    (capped, with jitter), so a dropped WebSocket (keepalive timeout,
+    network blip, etc. -- a real failure observed in testing) doesn't kill
+    the whole monitoring process. All strategy/position state lives in the
+    caller's closure via `on_tick`, so it survives a reconnect untouched.
+    """
+    import random
+
+    attempt = 0
+    while not stop_event.is_set():
+        try:
+            await stream_deriv_ticks(ticker, on_tick, stop_event)
+            return  # stream_deriv_ticks only returns normally once stop_event is set
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if stop_event.is_set():
+                return
+            attempt += 1
+            delay = min(RECONNECT_MAX_DELAY, RECONNECT_BASE_DELAY * (2 ** (attempt - 1)))
+            delay *= 0.8 + 0.4 * random.random()  # +/-20% jitter to avoid thundering-herd reconnects
+            log(f"[PAPER MODE] Connection dropped ({type(e).__name__}: {e}). Reconnecting in {delay:.1f}s (attempt {attempt})...")
+            await asyncio.sleep(delay)
+
+
 async def run_paper_mode(symbol: str = "XAUUSD_DERIV", notional: float = 10_000.0,
                           seed_candles: int = 60, max_seconds: Optional[float] = None,
                           log=print) -> None:
@@ -152,7 +183,7 @@ async def run_paper_mode(symbol: str = "XAUUSD_DERIV", notional: float = 10_000.
         if max_seconds is not None and (time.monotonic() - start_time) >= max_seconds:
             stop_event.set()
 
-    stream_task = asyncio.create_task(stream_deriv_ticks(ticker, on_tick, stop_event))
+    stream_task = asyncio.create_task(_run_stream_with_reconnect(ticker, on_tick, stop_event, log))
     if max_seconds is not None:
         async def _timer():
             await asyncio.sleep(max_seconds)

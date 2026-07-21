@@ -17,6 +17,15 @@ crossover direction, and price zone. If either matches, the action is
 downgraded to SKIP. It always returns the full reasoning chain as a list
 of plain-English lines so the caller can print exactly why a decision was
 made.
+
+Decay: matches older than MEMORY_DECAY_DAYS are ignored. Without this, a
+single old loss can permanently veto a price zone forever -- this is a
+real failure mode we observed (GBPUSD memory mode skipped every exit
+signal for 4+ years off one 2021 loss, never closing its position). Decay
+keeps memory responsive to recent evidence instead of freezing on stale
+data ("overtraining" on old losses). This module also surfaces a loud
+warning when a symbol has racked up a long consecutive-skip streak, since
+that's the visible symptom of the memory filter getting stuck.
 """
 
 from __future__ import annotations
@@ -30,6 +39,14 @@ from typing import List, Optional
 
 LEDGER_HEADER = ["timestamp", "symbol", "action", "price", "quantity", "reason", "mode", "outcome", "pnl"]
 PRICE_TOLERANCE_PCT = 1.0  # +/- % band used to decide whether a price "matches" a past zone
+MEMORY_DECAY_DAYS = 365  # matches older than this no longer block a trade -- see module docstring.
+# Chosen empirically: tested 90/180/365/730 days against the 2018-present Yahoo backtest. XAUUSD
+# benefits from memory at every window tested; USDJPY's memory mode underperforms raw mode at
+# EVERY window tested (this asset's "loss zones" apparently get revisited profitably later --
+# skipping them costs more than it saves). 365 days was chosen as a defensible middle ground, not
+# because it's proven optimal -- if you retune this, rerun both --raw and --memory afterward, since
+# raw is decay-independent but memory is not, and stale ledger data can silently understate risk.
+CONSECUTIVE_SKIP_ALERT_THRESHOLD = 10  # loud warning once a symbol has skipped this many decisions in a row
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 LEDGER_PATH = os.path.join(DATA_DIR, "ledger.csv")
@@ -41,9 +58,24 @@ LEARNINGS_HEADER = "# Trading Learnings\n\nPlain-English warnings distilled from
 # - WARNING: BTCUSDT golden-cross near 64500.00-65500.00 produced a loss of -42.30 on 2026-07-15T03:00:00+00:00.
 WARNING_RE = re.compile(
     r"-\s*WARNING:\s*(?P<symbol>\S+)\s+(?P<direction>golden-cross|death-cross)\s+.*?"
-    r"near\s+(?P<low>[\d.]+)-(?P<high>[\d.]+)",
+    r"near\s+(?P<low>[\d.]+)-(?P<high>[\d.]+).*?"
+    r"on\s+(?P<timestamp>\S+)\.",
     re.IGNORECASE,
 )
+
+
+def _within_decay_window(timestamp_str: str, decay_days: Optional[int] = None) -> bool:
+    """True if `timestamp_str` (ISO format) is recent enough to still count as a match."""
+    if decay_days is None:
+        decay_days = MEMORY_DECAY_DAYS  # read at call time, not bind time -- module global must stay overridable
+    try:
+        ts = datetime.fromisoformat(timestamp_str)
+    except ValueError:
+        return True  # unparseable timestamp -- fail open rather than silently dropping a real warning
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+    return age_days <= decay_days
 
 
 def ensure_memory_files() -> None:
@@ -81,9 +113,21 @@ def _read_learnings_warnings() -> List[dict]:
             "direction": m.group("direction").lower(),
             "low": float(m.group("low")),
             "high": float(m.group("high")),
+            "timestamp": m.group("timestamp"),
         }
         for m in WARNING_RE.finditer(text)
     ]
+
+
+def _consecutive_skip_streak(symbol: str) -> int:
+    """Counts trailing consecutive SKIP rows for `symbol` (any mode) at the end of the ledger."""
+    rows = [r for r in _read_ledger_rows() if r.get("symbol") == symbol and r.get("action") in ("BUY", "SELL", "SKIP")]
+    streak = 0
+    for row in reversed(rows):
+        if row["action"] != "SKIP":
+            break
+        streak += 1
+    return streak
 
 
 def direction_keyword(reason: str) -> str:
@@ -110,6 +154,7 @@ def check_memory(symbol: str, action: str, price: float, reason: str) -> MemoryV
     ]
 
     direction = direction_keyword(reason)
+    stale_ledger_count = 0
     ledger_matches = []
     for row in _read_ledger_rows():
         if row.get("symbol") != symbol or row.get("outcome") != "LOSS":
@@ -120,8 +165,12 @@ def check_memory(symbol: str, action: str, price: float, reason: str) -> MemoryV
             row_price = float(row["price"])
         except (KeyError, ValueError, TypeError):
             continue
-        if _price_matches(price, row_price):
-            ledger_matches.append(row)
+        if not _price_matches(price, row_price):
+            continue
+        if not _within_decay_window(row.get("timestamp", "")):
+            stale_ledger_count += 1
+            continue
+        ledger_matches.append(row)
 
     if ledger_matches:
         for row in ledger_matches:
@@ -130,29 +179,44 @@ def check_memory(symbol: str, action: str, price: float, reason: str) -> MemoryV
                 f"that closed at a LOSS of {float(row['pnl']):.2f} ({row['reason']})"
             )
     else:
-        lines.append(f"     no prior {symbol} crossover losses found near {price:.2f}")
+        lines.append(f"     no prior {symbol} crossover losses found near {price:.2f} within the last {MEMORY_DECAY_DAYS} days")
+    if stale_ledger_count:
+        lines.append(f"     ({stale_ledger_count} older matching loss(es) ignored -- past the {MEMORY_DECAY_DAYS}-day decay window)")
 
     lines.append("  -> Reading data/learnings.md for matching warnings...")
-    learnings_matches = [
+    all_learnings = [
         w for w in _read_learnings_warnings()
         if w["symbol"] == symbol and w["direction"] == direction and w["low"] <= price <= w["high"]
     ]
+    learnings_matches = [w for w in all_learnings if _within_decay_window(w["timestamp"])]
+    stale_learnings_count = len(all_learnings) - len(learnings_matches)
 
     if learnings_matches:
         for w in learnings_matches:
             lines.append(f"     found a learnings.md warning: {symbol} {w['direction']} near {w['low']:.2f}-{w['high']:.2f}")
     else:
-        lines.append("     no matching warnings found in learnings.md")
+        lines.append("     no matching warnings found in learnings.md within the decay window")
+    if stale_learnings_count:
+        lines.append(f"     ({stale_learnings_count} older matching warning(s) ignored -- past the {MEMORY_DECAY_DAYS}-day decay window)")
 
     if ledger_matches or learnings_matches:
         lines.append(
             f"  -> DOWNGRADING {action} -> SKIP: {len(ledger_matches)} ledger loss(es) + "
-            f"{len(learnings_matches)} learnings warning(s) matched this setup."
+            f"{len(learnings_matches)} learnings warning(s) matched this setup (within {MEMORY_DECAY_DAYS} days)."
         )
         final_action = "SKIP"
     else:
-        lines.append(f"  -> No precedent found. Proceeding with {action}.")
+        lines.append(f"  -> No recent precedent found. Proceeding with {action}.")
         final_action = action
+
+    if final_action == "SKIP":
+        streak = _consecutive_skip_streak(symbol) + 1  # +1 for the SKIP about to be recorded
+        if streak >= CONSECUTIVE_SKIP_ALERT_THRESHOLD:
+            lines.append(
+                f"  !! ALERT: {symbol} has now skipped {streak} decisions in a row. The memory filter may be "
+                f"stuck on this symbol -- consider reviewing data/learnings.md for stale warnings, or that this "
+                f"decay window ({MEMORY_DECAY_DAYS}d) may need shortening."
+            )
 
     return MemoryVerdict(final_action=final_action, reasoning=lines)
 

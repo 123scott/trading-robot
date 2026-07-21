@@ -2,9 +2,12 @@
 
 Plain-English warnings distilled from realized losses.
 
+- WARNING: XAUUSD_DERIV death-cross near 4936.48-5036.20 produced a loss of -83.29 on 2026-02-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: XAUUSD_DERIV death-cross near 4962.83-5063.09 produced a loss of -291.37 on 2026-03-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: XAUUSD_DERIV death-cross near 4549.78-4641.70 produced a loss of -324.48 on 2026-04-28T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: XAUUSD_DERIV death-cross near 4501.04-4591.98 produced a loss of -78.06 on 2026-05-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.38-1.41 produced a loss of -17.26 on 2018-04-27T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.30-1.33 produced a loss of -62.84 on 2018-06-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -119.42 on 2018-07-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -176.20 on 2018-07-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -8.99 on 2018-10-05T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.28-1.30 produced a loss of -226.70 on 2018-10-25T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.27-1.29 produced a loss of -53.46 on 2018-11-21T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
@@ -16,11 +19,7 @@ Plain-English warnings distilled from realized losses.
 - WARNING: GBPUSD death-cross near 1.29-1.31 produced a loss of -139.98 on 2020-02-06T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.24-1.27 produced a loss of -44.96 on 2020-06-24T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.36-1.39 produced a loss of -109.68 on 2021-08-19T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.35-1.38 produced a loss of -160.68 on 2021-09-23T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.34-1.36 produced a loss of -183.84 on 2021-11-05T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.33-1.35 produced a loss of -13.66 on 2022-01-28T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.33-1.36 produced a loss of -108.19 on 2022-03-01T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -46.82 on 2022-04-06T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -550.69 on 2022-04-06T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.20-1.23 produced a loss of -350.66 on 2022-06-14T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.18-1.21 produced a loss of -189.37 on 2022-08-19T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.19-1.22 produced a loss of -140.80 on 2023-02-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
@@ -32,11 +31,6 @@ Plain-English warnings distilled from realized losses.
 - WARNING: GBPUSD death-cross near 1.29-1.32 produced a loss of -184.52 on 2024-10-10T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.24-1.27 produced a loss of -140.53 on 2024-12-23T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: GBPUSD death-cross near 1.26-1.29 produced a loss of -270.24 on 2025-04-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.33-1.36 produced a loss of -212.57 on 2025-07-15T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.33-1.36 produced a loss of -63.73 on 2025-09-05T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.33-1.35 produced a loss of -124.03 on 2025-09-29T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.35-1.38 produced a loss of -36.39 on 2026-02-17T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: GBPUSD death-cross near 1.32-1.34 produced a loss of -153.05 on 2026-05-18T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD death-cross near 1289.87-1315.93 produced a loss of -190.48 on 2018-03-01T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD death-cross near 1303.14-1329.46 produced a loss of -244.57 on 2018-04-26T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD death-cross near 1263.44-1288.96 produced a loss of -174.76 on 2018-06-18T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
@@ -68,9 +62,6 @@ Plain-English warnings distilled from realized losses.
 - WARNING: XAUUSD death-cross near 2323.13-2370.07 produced a loss of -140.34 on 2024-06-03T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD death-cross near 2586.18-2638.42 produced a loss of -122.51 on 2024-12-23T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD death-cross near 3261.46-3327.34 produced a loss of -68.43 on 2025-06-30T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD death-cross near 3303.53-3370.27 produced a loss of -48.31 on 2025-08-21T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD death-cross near 4499.75-4590.65 produced a loss of -415.82 on 2026-04-29T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD death-cross near 4485.99-4576.61 produced a loss of -46.57 on 2026-05-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 111.79-114.05 produced a loss of -28.88 on 2018-11-26T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 111.38-113.63 produced a loss of -95.52 on 2018-12-10T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 110.38-112.61 produced a loss of -19.34 on 2019-05-03T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
@@ -90,19 +81,6 @@ Plain-English warnings distilled from realized losses.
 - WARNING: USDJPY death-cross near 108.58-110.77 produced a loss of -65.67 on 2021-08-24T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 108.29-110.48 produced a loss of -39.79 on 2021-09-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 111.91-114.17 produced a loss of -108.50 on 2021-12-06T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 146.31-149.27 produced a loss of -197.98 on 2025-04-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 141.23-144.08 produced a loss of -230.11 on 2025-05-27T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 143.24-146.13 produced a loss of -3.25 on 2025-07-04T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 145.61-148.55 produced a loss of -0.88 on 2025-09-02T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 146.50-149.46 produced a loss of -38.24 on 2025-09-04T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 146.86-149.83 produced a loss of -2.09 on 2025-09-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 144.95-147.88 produced a loss of -64.53 on 2025-09-17T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 150.93-153.98 produced a loss of -238.38 on 2026-01-28T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 157.22-160.40 produced a loss of -25.44 on 2026-04-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: USDJPY death-cross near 155.28-158.41 produced a loss of -157.57 on 2026-05-04T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD_DERIV death-cross near 4936.48-5036.20 produced a loss of -83.29 on 2026-02-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD_DERIV death-cross near 4962.83-5063.09 produced a loss of -291.37 on 2026-03-16T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD_DERIV death-cross near 4549.78-4641.70 produced a loss of -324.48 on 2026-04-28T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD_DERIV death-cross near 4501.04-4591.98 produced a loss of -78.06 on 2026-05-20T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
-- WARNING: XAUUSD death-cross near 1210.67-1235.13 produced a loss of -792.80 on 2018-11-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: USDJPY death-cross near 132.03-134.70 produced a loss of -303.75 on 2023-03-17T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: USDJPY death-cross near 141.23-144.08 produced a loss of -776.99 on 2025-05-27T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+- WARNING: USDJPY death-cross near 143.24-146.13 produced a loss of -3.25 on 2025-07-04T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
