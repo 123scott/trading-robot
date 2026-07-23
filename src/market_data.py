@@ -5,10 +5,17 @@ market_data.py
 Single entry point the replay/trading_robot layer calls to get candles,
 regardless of which underlying source a symbol actually comes from. Keeps
 strategy/memory code fully data-source-agnostic.
+
+Also owns the per-symbol transaction cost model (spread, slippage,
+commission) applied at execution in trading_robot.py. These are
+ILLUSTRATIVE ASSUMPTIONS, not live-fetched real broker fee schedules --
+documented per-field below. Override COST_PROFILES with your actual
+broker's numbers before trusting any backtest for real money.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import List, Optional
 
 from src.candle import Candle
@@ -21,9 +28,36 @@ YFINANCE_SYMBOLS = set(YFINANCE_TICKERS)
 DERIV_SYMBOL_NAMES = set(DERIV_SYMBOLS)
 SUPPORTED_SYMBOLS = BINANCE_SYMBOLS | YFINANCE_SYMBOLS | DERIV_SYMBOL_NAMES
 
-# Approximate spread (price units) applied at execution for spread-aware
-# sources. 0.0 = fills exactly at signal price (the original behavior).
-SPREAD_BY_SYMBOL = {"XAUUSD_DERIV": DEFAULT_SPREAD}
+
+@dataclass
+class CostProfile:
+    spread: float          # round-trip spread, price units (half applied on each side, worsening the fill)
+    slippage_pct: float    # extra adverse fill vs quote, as a fraction of price (models imperfect execution)
+    commission_pct: float  # broker commission, as a fraction of notional, charged on EACH side (entry + exit)
+
+
+# Illustrative retail-ish assumptions, not live broker data. Sources of the
+# ballpark figures: typical retail forex spreads (~1-2 pips majors), typical
+# gold spreads (~$0.30-0.50), Binance spot taker fee (0.10%). Replace with
+# your actual broker's published spread/commission schedule before trusting
+# any backtest for real capital.
+COST_PROFILES = {
+    "BTCUSDT":      CostProfile(spread=5.00,             slippage_pct=0.0005, commission_pct=0.0010),
+    "GBPUSD":       CostProfile(spread=0.00015,          slippage_pct=0.0001, commission_pct=0.00005),
+    "USDJPY":       CostProfile(spread=0.015,            slippage_pct=0.0001, commission_pct=0.00005),
+    "XAUUSD":       CostProfile(spread=0.35,             slippage_pct=0.0001, commission_pct=0.00010),
+    "XAUUSD_DERIV": CostProfile(spread=DEFAULT_SPREAD,   slippage_pct=0.0001, commission_pct=0.00010),
+}
+_NO_COST = CostProfile(spread=0.0, slippage_pct=0.0, commission_pct=0.0)
+
+
+def cost_profile_for(symbol: str) -> CostProfile:
+    return COST_PROFILES.get(symbol, _NO_COST)
+
+
+def spread_for(symbol: str) -> float:
+    """Kept for backward compatibility -- prefer cost_profile_for() for new code."""
+    return cost_profile_for(symbol).spread
 
 
 def source_for(symbol: str) -> str:
@@ -43,11 +77,6 @@ def default_interval_for(symbol: str) -> str:
     if source_for(symbol) == "binance":
         return "1h"
     return "1d"
-
-
-def spread_for(symbol: str) -> float:
-    """Approximate round-trip spread cost applied at execution (0.0 if unmodeled for this symbol)."""
-    return SPREAD_BY_SYMBOL.get(symbol, 0.0)
 
 
 def fetch_candles(symbol: str, interval: Optional[str] = None, limit: int = 500,

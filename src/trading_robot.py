@@ -19,11 +19,14 @@ real trade history across runs regardless of mode. Only "memory" mode reads
 that history back and acts on it -- "raw" mode's trading behaviour is
 completely unaffected by memory, by design.
 
-Spread-aware symbols (currently XAUUSD_DERIV) pay a fill-price cost on
-every trade: BUY fills at signal_price + spread/2, SELL fills at
-signal_price - spread/2 (market_data.spread_for()). Signal detection and
-memory zone-matching still operate on the underlying quote price -- only
-the recorded fill/PnL reflects the spread.
+Transaction costs (market_data.cost_profile_for()) are applied at every
+fill: spread and slippage worsen the fill price (BUY fills above the
+signal price, SELL fills below it), and commission is charged on both
+entry and exit as a % of notional, deducted from the closed trade's PnL.
+Signal detection and memory zone-matching still operate on the underlying
+quote price -- only the recorded fill/PnL reflects costs. These are
+illustrative cost assumptions, not live broker fee schedules -- see
+market_data.COST_PROFILES.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ class ReplayResult:
     wins: int
     losses: int
     total_pnl: float
+    total_commission: float = 0.0
 
 
 def _fmt_time(open_time_ms: int) -> str:
@@ -58,11 +62,12 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
 
     source = market_data.source_for(symbol)
     interval = interval or market_data.default_interval_for(symbol)
-    spread = market_data.spread_for(symbol)
+    costs = market_data.cost_profile_for(symbol)
     range_desc = f"{start} -> {end or 'present'}" if start else f"most recent {limit} bars"
     log(f"Fetching real {symbol} {interval} candles from {source} ({range_desc})...")
-    if spread:
-        log(f"Spread modeling enabled: approx {spread:.4f} round-trip (buys fill +{spread/2:.4f}, sells fill -{spread/2:.4f})")
+    if costs.spread or costs.slippage_pct or costs.commission_pct:
+        log(f"Cost model: spread {costs.spread:.5f} (round-trip), slippage {costs.slippage_pct*100:.3f}% "
+            f"per fill, commission {costs.commission_pct*100:.3f}% of notional per side")
     candles = market_data.fetch_candles(symbol=symbol, interval=interval, limit=limit, start=start, end=end)
     log(f"Fetched {len(candles)} candles ({_fmt_time(candles[0].open_time)} -> {_fmt_time(candles[-1].open_time)})\n")
 
@@ -72,8 +77,10 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
     tracker = PositionTracker()
     trades = skips = wins = losses = 0
     total_pnl = 0.0
+    total_commission = 0.0
     open_entry_price: Optional[float] = None
     open_quantity: Optional[float] = None
+    open_entry_commission: Optional[float] = None
 
     for signal in signals:
         intent = tracker.next_intent(signal)
@@ -99,18 +106,26 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
             continue
 
         if final_action == "BUY":
-            fill_price = intent.price + spread / 2
+            fill_price = intent.price + costs.spread / 2 + intent.price * costs.slippage_pct
+            entry_commission = notional * costs.commission_pct
             tracker.apply(Action.BUY)
             open_entry_price = fill_price
             open_quantity = notional / fill_price
+            open_entry_commission = entry_commission
+            total_commission += entry_commission
             memory.record_trade(symbol, "BUY", fill_price, round(open_quantity, 6), intent.reason, mode, "OPEN", 0.0, ts)
             trades += 1
-            log(f"  => BUY executed @ {fill_price:.5f} (qty {open_quantity:.6f}, notional ${notional:,.2f}). Position opened.\n")
+            log(f"  => BUY executed @ {fill_price:.5f} (qty {open_quantity:.6f}, notional ${notional:,.2f}, "
+                f"commission ${entry_commission:.2f}). Position opened.\n")
 
         elif final_action == "SELL":
-            fill_price = intent.price - spread / 2
+            fill_price = intent.price - costs.spread / 2 - intent.price * costs.slippage_pct
             qty = open_quantity or (notional / fill_price)
-            pnl = (fill_price - open_entry_price) * qty if open_entry_price is not None else 0.0
+            exit_notional = fill_price * qty
+            exit_commission = exit_notional * costs.commission_pct
+            total_commission += exit_commission
+            gross_pnl = (fill_price - open_entry_price) * qty if open_entry_price is not None else 0.0
+            pnl = gross_pnl - (open_entry_commission or 0.0) - exit_commission
             tracker.apply(Action.SELL)
             outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
             memory.record_trade(symbol, "SELL", fill_price, round(qty, 6), intent.reason, mode, outcome, pnl, ts)
@@ -125,12 +140,15 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
                 log("  -> Recorded a new learnings.md warning for this loss zone.")
 
             total_pnl += pnl
-            log(f"  => SELL executed @ {fill_price:.5f} (qty {qty:.6f}). Closed trade PnL: {pnl:.2f} ({outcome}).\n")
+            log(f"  => SELL executed @ {fill_price:.5f} (qty {qty:.6f}, commission ${exit_commission:.2f}). "
+                f"Gross PnL {gross_pnl:.2f}, net of all costs: {pnl:.2f} ({outcome}).\n")
             open_entry_price = None
             open_quantity = None
+            open_entry_commission = None
 
     log("=" * 60)
     log(f"Replay complete [{mode.upper()} MODE]: {trades} trade(s) executed, {skips} skipped, "
-        f"{wins} win(s), {losses} loss(es), total PnL {total_pnl:.2f}")
+        f"{wins} win(s), {losses} loss(es), total PnL {total_pnl:.2f} (net of ${total_commission:.2f} total commission)")
 
-    return ReplayResult(trades=trades, skips=skips, wins=wins, losses=losses, total_pnl=total_pnl)
+    return ReplayResult(trades=trades, skips=skips, wins=wins, losses=losses,
+                         total_pnl=total_pnl, total_commission=total_commission)

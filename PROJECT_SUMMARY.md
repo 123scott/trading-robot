@@ -58,16 +58,29 @@ python -m src.replay --paper  --symbol XAUUSD_DERIV --notional 100 # live forwar
 Position sizing is notional-based (fixed $ exposure per trade) so results
 are comparable across assets with very different price scales.
 
-### Reporting (`src/report.py`, `src/monte_carlo.py`)
+### Transaction costs (`market_data.COST_PROFILES`)
+Every fill pays spread + slippage (worsens the fill price) and commission
+(% of notional, both sides), applied in `trading_robot.py`. Illustrative
+retail-ish assumptions, not a real broker's fee schedule -- see
+`data/performance_report.md` for the exact figures and why they matter
+(GBPUSD raw mode flips from profitable to a net loss once costs are
+applied).
+
+### Reporting & statistics (`src/report.py`, `src/monte_carlo.py`, `src/alpha_test.py`)
 ```
-python -m src.report --symbols GBPUSD,XAUUSD,USDJPY   # comparison table, Sharpe/Sortino
+python -m src.report --symbols GBPUSD,XAUUSD,USDJPY        # comparison table, Sharpe/Sortino
 python -m src.monte_carlo --symbol XAUUSD --mode memory --iterations 5000
+python -m src.alpha_test --symbol XAUUSD --mode memory     # edge t-test + alpha/beta vs buy-and-hold
 ```
-Full current results: **`data/performance_report.md`**. Headline: XAUUSD's
-memory mode has a real, modest edge over raw (95.80% vs 87.97% total
-return, similar drawdown, overlapping-but-shifted 95% CIs). **USDJPY's
-memory mode is currently worse than raw at every decay window tested** --
-flagged explicitly in the report, not something to trade live as-is.
+Full current results: **`data/performance_report.md`**. Headline finding:
+**this strategy does not currently show statistically significant alpha
+vs. a simple buy-and-hold benchmark on any of the three assets.** XAUUSD
+memory mode has a significant trade-level edge (p=0.037) but its alpha
+vs. buy-and-hold is not significant (p=0.68) and its CAGR (10.87%) is
+below just holding gold (14.24%) over the same period. USDJPY raw mode
+has significant alpha (p=0.029) but that doesn't replicate in the
+trade-level test, and memory mode makes USDJPY worse on every metric.
+Read the full alpha section before treating any of this as proven edge.
 
 ### Live monitoring (`src/live_monitor.py`)
 ```
@@ -93,6 +106,8 @@ a chat.
 
 ## Known Limitations / Honest Caveats
 
+0. **No statistically significant alpha vs. buy-and-hold on any asset yet**
+   -- see the alpha-test section above. This is not a proven-edge system.
 1. **USDJPY memory mode underperforms raw mode** at every tested decay
    window -- don't trust it live without further work.
 2. **Every backtest's "Max Drawdown" is realized-PnL only** -- it doesn't
