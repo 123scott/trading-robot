@@ -126,6 +126,54 @@ an edge":**
 | USDJPY | memory | +1,146.54 |
 | XAUUSD | memory | -1,281.98 |
 
+## XAUUSD Out-of-Sample Validation (`src/optimize.py`)
+
+Direct response to the "get an out-of-sample / walk-forward validation"
+recommendation above: SMA (fast, slow) periods were grid-searched using
+**only** training data (2018-01-01 to 2025-07-01, real XAUUSD candles),
+scored by training-period Sharpe with a 15-trade minimum so a lucky
+low-sample combo can't win by chance. Grid deliberately small (35
+combinations) -- searching a huge space against one split is itself a
+form of overfitting. The chosen parameters were then run once, untouched,
+against the held-out test period (2025-07-01 to present) that the search
+never saw. Baseline (9/21, never tuned) run the same way for comparison.
+Each experiment gets its own isolated ledger tag (`XAUUSD_BASE`,
+`XAUUSD_OPT`) so their memory systems can't cross-contaminate.
+
+**Selected: SMA(7, 50)**, chosen for the best training Sharpe (0.92 vs.
+baseline's 0.57) among eligible combinations.
+
+| Experiment | Mode | Period | Trades | Win % | Profit Factor | Max DD % | Sharpe | Net PnL % |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| Baseline (9/21) | raw | train | 49 | 34.7 | 1.87 | 9.63 | 0.57 | 50.50 |
+| Baseline (9/21) | raw | test | 6 | 50.0 | 7.51 | 3.40 | 1.57 | 34.19 |
+| Baseline (9/21) | memory | train | 49 | 34.7 | 1.87 | 9.63 | 0.57 | 50.50 |
+| Baseline (9/21) | memory | test | 3 | 100.0 | undef | 0.00 | -- | 42.16 |
+| **Optimized (7/50)** | raw | train | 25 | 52.0 | 4.34 | 2.50 | 0.92 | 55.01 |
+| **Optimized (7/50)** | raw | test | 3 | 66.7 | 21.63 | 2.14 | -- | 53.73 |
+| **Optimized (7/50)** | memory | train | 25 | 52.0 | 4.34 | 2.50 | 0.92 | 55.01 |
+| **Optimized (7/50)** | memory | test | 1 | 100.0 | undef | 0.00 | -- | 68.66 |
+
+(Baseline memory mode's train numbers exactly match raw's -- it recorded
+zero SKIPs during 2018-2025, only starting to match past losses once
+gold's 2025-2026 rally created tightly-clustered price zones. Not a bug,
+just what the decay window did with this particular data.)
+
+**Read this honestly, not optimistically.** Directionally, the tuned
+model held up out-of-sample (higher win rate and profit factor than
+baseline in both train and test, not a collapse) -- that's mildly
+reassuring. But **the test period produced only 1-6 closed trades per
+row above, which is too few to compute a reliable Sharpe or draw any
+statistically confident conclusion.** This is a structural limitation of
+a low-frequency crossover strategy (roughly 6-25 signals over 7.5 years
+of training): a single 1-year holdout window is fundamentally too short
+to validate it properly, no matter how the parameters are chosen. Treat
+this result as "did not obviously fail out-of-sample" rather than
+"proven to generalize." A real validation would need either many more
+years of forward data, or a walk-forward scheme with multiple
+train/test splits across the existing history to get more than a
+handful of out-of-sample observations.
+
 ## Recommendations Before Considering Live Capital
 
 1. **Replace `market_data.COST_PROFILES` with your actual broker's real
@@ -149,13 +197,13 @@ an edge":**
    reduction, capital efficiency from ~40-60% time-in-market, etc.) --
    quantify that trade-off explicitly before deciding it's worth running.
 
-4. **Get an out-of-sample / walk-forward validation before trusting any
-   of this.** The SMA(9)/SMA(21) parameters were chosen once and never
-   tuned, which is good (no overfitting from parameter search) -- but
-   also never validated on a holdout period. Split the data (e.g.
-   2018-2022 train, 2023-present test) and confirm the XAUUSD edge
-   persists out-of-sample before trusting the in-sample p-values above at
-   face value.
+4. **[Done, data-limited] Out-of-sample validation was run** (see the
+   section above, `src/optimize.py`) -- the tuned SMA(7,50) model didn't
+   collapse out-of-sample, but the 2025-07-present test window only
+   produced 1-6 closed trades, nowhere near enough to trust statistically.
+   Re-run this as a proper walk-forward (multiple rolling train/test
+   splits across 2018-present, not one single split) to get enough
+   out-of-sample trade observations to actually trust a conclusion.
 
 5. **This strategy has no explicit stop-loss or take-profit** -- it exits
    purely on the opposite crossover signal, which can be a long time

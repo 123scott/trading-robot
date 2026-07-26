@@ -57,8 +57,19 @@ def _fmt_time(open_time_ms: int) -> str:
 
 def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: int = 500,
                 start: Optional[str] = None, end: Optional[str] = None,
-                mode: str = "raw", notional: float = 10_000.0, log=print) -> ReplayResult:
+                mode: str = "raw", notional: float = 10_000.0,
+                fast_period: int = 9, slow_period: int = 21,
+                ledger_symbol: Optional[str] = None, log=print) -> ReplayResult:
+    """
+    ledger_symbol: the tag written to data/ledger.csv's symbol column and
+    used for memory lookups (defaults to `symbol`). Real market data always
+    comes from `symbol` -- ledger_symbol only exists so isolated experiments
+    (e.g. comparing SMA parameter sets) can each get their own clean memory
+    history in the same shared ledger file, without cross-contaminating
+    each other's SKIP decisions.
+    """
     assert mode in ("raw", "memory"), "mode must be 'raw' or 'memory'"
+    ledger_symbol = ledger_symbol or symbol
 
     source = market_data.source_for(symbol)
     interval = interval or market_data.default_interval_for(symbol)
@@ -71,8 +82,8 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
     candles = market_data.fetch_candles(symbol=symbol, interval=interval, limit=limit, start=start, end=end)
     log(f"Fetched {len(candles)} candles ({_fmt_time(candles[0].open_time)} -> {_fmt_time(candles[-1].open_time)})\n")
 
-    signals = detect_crossovers(candles)
-    log(f"Detected {len(signals)} raw crossover signals (fast/slow SMA)\n")
+    signals = detect_crossovers(candles, fast_period=fast_period, slow_period=slow_period)
+    log(f"Detected {len(signals)} raw crossover signals (SMA {fast_period}/{slow_period})\n")
 
     tracker = PositionTracker()
     trades = skips = wins = losses = 0
@@ -92,7 +103,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
         log(f"--- {ts} | signal: {signal.direction.value} @ {intent.price:.5f} ---")
 
         if mode == "memory":
-            verdict = memory.check_memory(symbol, intent.action.value, intent.price, intent.reason)
+            verdict = memory.check_memory(ledger_symbol, intent.action.value, intent.price, intent.reason)
             for line in verdict.reasoning:
                 log(line)
             final_action = verdict.final_action
@@ -101,7 +112,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
 
         if final_action == "SKIP":
             skips += 1
-            memory.record_trade(symbol, "SKIP", intent.price, 0, intent.reason, mode, "SKIPPED", 0.0, ts)
+            memory.record_trade(ledger_symbol, "SKIP", intent.price, 0, intent.reason, mode, "SKIPPED", 0.0, ts)
             log(f"  => SKIPPED. Position remains {tracker.state.value}.\n")
             continue
 
@@ -113,7 +124,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
             open_quantity = notional / fill_price
             open_entry_commission = entry_commission
             total_commission += entry_commission
-            memory.record_trade(symbol, "BUY", fill_price, round(open_quantity, 6), intent.reason, mode, "OPEN", 0.0, ts)
+            memory.record_trade(ledger_symbol, "BUY", fill_price, round(open_quantity, 6), intent.reason, mode, "OPEN", 0.0, ts)
             trades += 1
             log(f"  => BUY executed @ {fill_price:.5f} (qty {open_quantity:.6f}, notional ${notional:,.2f}, "
                 f"commission ${entry_commission:.2f}). Position opened.\n")
@@ -128,7 +139,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
             pnl = gross_pnl - (open_entry_commission or 0.0) - exit_commission
             tracker.apply(Action.SELL)
             outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
-            memory.record_trade(symbol, "SELL", fill_price, round(qty, 6), intent.reason, mode, outcome, pnl, ts)
+            memory.record_trade(ledger_symbol, "SELL", fill_price, round(qty, 6), intent.reason, mode, outcome, pnl, ts)
             trades += 1
 
             if outcome == "WIN":
@@ -136,7 +147,7 @@ def run_replay(symbol: str = "BTCUSDT", interval: Optional[str] = None, limit: i
             elif outcome == "LOSS":
                 losses += 1
                 direction = memory.direction_keyword(intent.reason)
-                memory.record_learning(symbol, direction, intent.price, pnl, ts)
+                memory.record_learning(ledger_symbol, direction, intent.price, pnl, ts)
                 log("  -> Recorded a new learnings.md warning for this loss zone.")
 
             total_pnl += pnl

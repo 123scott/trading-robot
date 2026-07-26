@@ -90,6 +90,21 @@ raw mode has significant alpha (p=0.029) but that doesn't replicate in
 the trade-level test, and memory mode makes USDJPY worse on every metric.
 Read the full alpha section before treating any of this as proven edge.
 
+### Train/test parameter search (`src/optimize.py`)
+```
+python -m src.optimize --symbol XAUUSD --train-end 2025-07-01
+```
+Grid-searches SMA fast/slow periods on training data ONLY (2018 to a cutoff
+date), then validates the chosen parameters on the untouched holdout
+period. Each experiment gets an isolated `ledger_symbol` tag
+(`trading_robot.run_replay`'s `ledger_symbol` param) so memory systems
+never cross-contaminate between experiments. Result for XAUUSD
+(train 2018-2025-07, test 2025-07-present): selected SMA(7,50) over the
+baseline SMA(9,21), which improved training win rate (52% vs 34.7%) and
+profit factor (4.34 vs 1.87), and held up directionally out-of-sample --
+**but the 1-year test window only produced 1-6 closed trades, too few to
+trust statistically.** Full writeup in `data/performance_report.md`.
+
 ### Live monitoring (`src/live_monitor.py`)
 ```
 python -m src.live_monitor --paper --symbol XAUUSD_DERIV --notional 100
