@@ -30,7 +30,12 @@ Conventions (stated explicitly since they affect the numbers):
     Sortino uses downside deviation (target = 0) in place of full stdev.
 
 Usage:
-    python -m src.report --symbols GBPUSD,XAUUSD,USDJPY
+    python -m src.report --symbols XAUUSD,USDJPY
+
+Note: GBPUSD was removed from the active model's default scope (no
+statistically significant edge found in testing -- see
+data/performance_report.md). Its historical data/code support isn't
+deleted -- pass --symbols GBPUSD,... explicitly to still report on it.
 """
 
 from __future__ import annotations
@@ -243,7 +248,9 @@ def highlight_optimal(results: List[ModeMetrics]) -> Optional[ModeMetrics]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Performance comparison report across symbols/modes.")
-    parser.add_argument("--symbols", default="GBPUSD,XAUUSD,USDJPY")
+    parser.add_argument("--symbols", default="XAUUSD,USDJPY",
+                         help="Comma-separated symbols. GBPUSD is no longer in the default scope "
+                              "(no statistically significant edge found) but can still be passed explicitly.")
     parser.add_argument("--notional", type=float, default=10_000.0)
     args = parser.parse_args()
 

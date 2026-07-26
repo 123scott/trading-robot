@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import dataclass
-from typing import List
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import numpy as np
 
@@ -54,6 +54,10 @@ class MonteCarloResult:
     max_dd_pct_p50: float
     max_dd_pct_p97_5: float
     prob_of_loss: float  # fraction of simulations that ended net negative
+    # Only populated when run_monte_carlo(..., return_distributions=True) --
+    # the full simulated outcome arrays, for charting (e.g. histograms).
+    sim_pnl_pct: Optional[list] = field(default=None, repr=False)
+    sim_max_dd_pct: Optional[list] = field(default=None, repr=False)
 
 
 def _read_trade_pnls(symbol: str, mode: str) -> List[float]:
@@ -66,7 +70,8 @@ def _read_trade_pnls(symbol: str, mode: str) -> List[float]:
 
 
 def run_monte_carlo(symbol: str, mode: str, notional: float = 10_000.0,
-                     iterations: int = 2000, seed: int = 42) -> MonteCarloResult:
+                     iterations: int = 2000, seed: int = 42,
+                     return_distributions: bool = False) -> MonteCarloResult:
     pnls = _read_trade_pnls(symbol, mode)
     n = len(pnls)
     if n < 2:
@@ -95,6 +100,8 @@ def run_monte_carlo(symbol: str, mode: str, notional: float = 10_000.0,
         max_dd_pct_p50=float(np.percentile(sim_max_dd_pct, 50)),
         max_dd_pct_p97_5=float(np.percentile(sim_max_dd_pct, 97.5)),
         prob_of_loss=float((sim_pnl_pct < 0).mean() * 100),
+        sim_pnl_pct=sim_pnl_pct.tolist() if return_distributions else None,
+        sim_max_dd_pct=sim_max_dd_pct.tolist() if return_distributions else None,
     )
 
 

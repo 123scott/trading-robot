@@ -27,12 +27,18 @@ specifically to test a two-file "memory" concept: before every BUY/SELL,
 check whether a similar setup has lost money before, and if so, downgrade
 to SKIP.
 
+**Active model scope: XAUUSD and USDJPY only.** GBPUSD was removed from
+the default/client-facing scope (no statistically significant edge found
+across any test) -- its data/code aren't deleted, just no longer part of
+the default reporting or the client deliverable.
+
 ### Data sources (`src/market_data.py` dispatches by symbol)
 - **Binance** (`src/data_binance.py`) -- BTCUSDT, public klines API.
-- **Yahoo Finance** (`src/data_yfinance.py`) -- GBPUSD, USDJPY, XAUUSD
-  (via `GC=F` gold futures proxy), full 2018-present daily history. **This
-  is the dataset of record for all statistical work** (Sharpe, Sortino,
-  Monte Carlo) -- it's the only source with a deep enough sample.
+- **Yahoo Finance** (`src/data_yfinance.py`) -- USDJPY, XAUUSD (via `GC=F`
+  gold futures proxy; GBPUSD support still exists but is out of active
+  scope), full 2018-present daily history. **This is the dataset of
+  record for all statistical work** (Sharpe, Sortino, Monte Carlo) --
+  it's the only source with a deep enough sample.
 - **Deriv** (`src/data_deriv.py`) -- `XAUUSD_DERIV` (`frxXAUUSD`), public
   WebSocket API, no auth needed. Historical depth capped at ~1 year
   (verified by direct probing -- not a bug, a real API limit). Used
@@ -68,18 +74,20 @@ applied).
 
 ### Reporting & statistics (`src/report.py`, `src/monte_carlo.py`, `src/alpha_test.py`)
 ```
-python -m src.report --symbols GBPUSD,XAUUSD,USDJPY        # comparison table, Sharpe/Sortino
+python -m src.report --symbols XAUUSD,USDJPY        # comparison table, Sharpe/Sortino (default scope)
 python -m src.monte_carlo --symbol XAUUSD --mode memory --iterations 5000
 python -m src.alpha_test --symbol XAUUSD --mode memory     # edge t-test + alpha/beta vs buy-and-hold
 ```
-Full current results: **`data/performance_report.md`**. Headline finding:
-**this strategy does not currently show statistically significant alpha
-vs. a simple buy-and-hold benchmark on any of the three assets.** XAUUSD
-memory mode has a significant trade-level edge (p=0.037) but its alpha
-vs. buy-and-hold is not significant (p=0.68) and its CAGR (10.87%) is
-below just holding gold (14.24%) over the same period. USDJPY raw mode
-has significant alpha (p=0.029) but that doesn't replicate in the
-trade-level test, and memory mode makes USDJPY worse on every metric.
+Full current results: **`data/performance_report.md`** and the
+client-facing dashboard (equity curves, Monte Carlo histograms, stat
+tiles, evaluation/recommendations) published as an Artifact. Headline
+finding: **this strategy does not currently show statistically
+significant alpha vs. a simple buy-and-hold benchmark on either active
+asset.** XAUUSD memory mode has a significant trade-level edge (p=0.037)
+but its alpha vs. buy-and-hold is not significant (p=0.68) and its CAGR
+(10.87%) is below just holding gold (14.24%) over the same period. USDJPY
+raw mode has significant alpha (p=0.029) but that doesn't replicate in
+the trade-level test, and memory mode makes USDJPY worse on every metric.
 Read the full alpha section before treating any of this as proven edge.
 
 ### Live monitoring (`src/live_monitor.py`)
