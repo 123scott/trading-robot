@@ -2,39 +2,38 @@
 """
 medfreq_strategy.py
 
-The XAUUSD_MEDFREQ bot: intraday (H1) EMA crossover with a 200 EMA trend
-filter, RSI momentum filter, and ATR-based stop-loss/take-profit exits --
-a fundamentally different exit model from the lowfreq bot's
-opposite-signal exit (backtest_entries.py/trading_robot.py), so this
-module owns its own bar-by-bar simulation loop rather than reusing
-PositionTracker.
+XAUUSD_MEDFREQ bot -- Top-Down Multi-Timeframe (MTF) model.
 
-Entry rules:
-  LONG:  EMA(fast) crosses above EMA(slow), price > EMA(trend), RSI in
-         [rsi_long_lo, rsi_long_hi].
-  SHORT: EMA(fast) crosses below EMA(slow), price < EMA(trend), RSI in
-         [rsi_short_lo, rsi_short_hi].
-Only one position at a time (no pyramiding), either direction.
+  H4 chart  -> macro trend filter: 200 EMA (price above = bullish regime,
+               below = bearish regime).
+  H1 chart  -> momentum filter: RSI(14), same long/short bands as before.
+  M5 chart  -> execution: EMA(8/21) crossover triggers the entry, but
+               ONLY when the crossover direction agrees with both the H4
+               trend and the H1 RSI band. ATR-based stop-loss/take-profit
+               use the M5 ATR (tighter stops, matching the execution
+               timeframe's own volatility) rather than H1 ATR.
 
-Exit rules: ATR-based stop-loss and take-profit, computed once at entry
-from that bar's ATR and never moved. If a bar's range touches both
-levels, the stop is assumed to hit first -- the standard, conservative
-convention for bar-resolution backtests (H1 candles don't reveal
-intra-bar path, so this avoids silently overstating performance on
-ambiguous bars).
+H4/H1 indicators are computed on their own resampled candles (see
+src/data_dukascopy.py's resample()), then forward-filled onto the M5
+timeline using ONLY the most recently CLOSED higher-timeframe bar as of
+each M5 bar's open time -- align_htf_to_m5() ensures an M5 bar never sees
+a still-forming H1/H4 bar's value. This is the standard, correct way to
+combine timeframes without lookahead bias; getting this wrong (e.g. using
+the still-forming H4 bar's live EMA) would silently leak future
+information into every entry decision.
 
-Real transaction costs (market_data.cost_profile_for) applied at both
-entry and exit fills, same convention as trading_robot.py. This module
-does not yet integrate the two-file memory system (that was built around
-the lowfreq bot's long-only, opposite-signal-exit model) -- raw
-simulation only, clearly scoped as a v1.
+Real transaction costs applied at the M5 fill (spread/slippage/commission
+from market_data.cost_profile_for), consistent with every other module in
+this project. This module does not yet integrate the two-file memory
+system (built around the lowfreq bot's long-only, opposite-signal-exit
+model) -- raw simulation only, a deliberate v1 scope.
 """
 
 from __future__ import annotations
 
 import math
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
@@ -42,6 +41,7 @@ from typing import List, Optional
 from src.candle import Candle
 from src.indicators import ema, rsi, atr
 from src import market_data
+from src.data_dukascopy import resample
 
 TRADING_DAYS_PER_YEAR = 252
 
@@ -53,15 +53,17 @@ class Direction(Enum):
 
 @dataclass
 class MedFreqConfig:
+    # Execution timeframe (M5)
     ema_fast: int = 8
     ema_slow: int = 21
-    ema_trend: int = 200
-    rsi_period: int = 14
-    rsi_long: tuple = (40.0, 65.0)
-    rsi_short: tuple = (35.0, 60.0)
     atr_period: int = 14
     atr_sl_mult: float = 1.5
     atr_tp_mult: float = 2.75  # midpoint of the requested 2.5x-3.0x range
+    # Higher-timeframe filters
+    h4_trend_ema: int = 200
+    h1_rsi_period: int = 14
+    rsi_long: tuple = (40.0, 65.0)
+    rsi_short: tuple = (35.0, 60.0)
 
 
 @dataclass
@@ -76,25 +78,51 @@ class TradeRecord:
     pnl: float
 
 
-def simulate(candles: List[Candle], config: MedFreqConfig, symbol: str,
+def align_htf_to_m5(m5_candles: List[Candle], htf_candles: List[Candle],
+                     htf_values: List[Optional[float]], htf_minutes: int) -> List[Optional[float]]:
+    """
+    For each M5 candle, returns the higher-timeframe indicator value from
+    the most recently CLOSED htf bar (close time <= the M5 bar's open
+    time) -- never the still-forming htf bar covering that same moment.
+    None until the first htf bar has actually closed.
+    """
+    htf_duration_ms = htf_minutes * 60_000
+    aligned: List[Optional[float]] = [None] * len(m5_candles)
+    j = 0
+    last_closed_value: Optional[float] = None
+    for i, c in enumerate(m5_candles):
+        while j < len(htf_candles) and htf_candles[j].open_time + htf_duration_ms <= c.open_time:
+            last_closed_value = htf_values[j]
+            j += 1
+        aligned[i] = last_closed_value
+    return aligned
+
+
+def simulate(m5_candles: List[Candle], config: MedFreqConfig, symbol: str,
              notional: float = 10_000.0) -> List[TradeRecord]:
-    """Pure in-memory bar-by-bar simulation. No ledger I/O -- callers decide whether/how to log."""
-    closes = [c.close for c in candles]
+    """Pure in-memory bar-by-bar MTF simulation, M5 execution. No ledger I/O."""
+    h4_candles = resample(m5_candles, 240)
+    h1_candles = resample(m5_candles, 60)
+    h4_ema200 = ema([c.close for c in h4_candles], config.h4_trend_ema)
+    h1_rsi = rsi([c.close for c in h1_candles], config.h1_rsi_period)
+
+    trend_on_m5 = align_htf_to_m5(m5_candles, h4_candles, h4_ema200, 240)
+    rsi_on_m5 = align_htf_to_m5(m5_candles, h1_candles, h1_rsi, 60)
+
+    closes = [c.close for c in m5_candles]
     fast = ema(closes, config.ema_fast)
     slow = ema(closes, config.ema_slow)
-    trend = ema(closes, config.ema_trend)
-    rsi_vals = rsi(closes, config.rsi_period)
-    atr_vals = atr(candles, config.atr_period)
+    atr_vals = atr(m5_candles, config.atr_period)
     costs = market_data.cost_profile_for(symbol)
 
     trades: List[TradeRecord] = []
     position: Optional[dict] = None
 
-    for i in range(1, len(candles)):
-        if None in (fast[i], slow[i], fast[i - 1], slow[i - 1], trend[i], rsi_vals[i], atr_vals[i]):
+    for i in range(1, len(m5_candles)):
+        if None in (fast[i], slow[i], fast[i - 1], slow[i - 1], trend_on_m5[i], rsi_on_m5[i], atr_vals[i]):
             continue
 
-        c = candles[i]
+        c = m5_candles[i]
         t = datetime.fromtimestamp(c.open_time / 1000, tz=timezone.utc)
 
         if position is not None:
@@ -134,12 +162,13 @@ def simulate(candles: List[Candle], config: MedFreqConfig, symbol: str,
         death = prev_diff >= 0 and curr_diff < 0
         price = c.close
         a = atr_vals[i]
-        r = rsi_vals[i]
+        r = rsi_on_m5[i]
+        h4_trend = trend_on_m5[i]
 
         direction = None
-        if golden and price > trend[i] and config.rsi_long[0] <= r <= config.rsi_long[1]:
+        if golden and price > h4_trend and config.rsi_long[0] <= r <= config.rsi_long[1]:
             direction = Direction.LONG
-        elif death and price < trend[i] and config.rsi_short[0] <= r <= config.rsi_short[1]:
+        elif death and price < h4_trend and config.rsi_short[0] <= r <= config.rsi_short[1]:
             direction = Direction.SHORT
 
         if direction is None or not a or a <= 0:
@@ -177,7 +206,7 @@ def compute_metrics(trades: List[TradeRecord], notional: float) -> dict:
         if peak > 0:
             max_dd = max(max_dd, (peak - equity) / peak * 100)
 
-    sharpe = None
+    sharpe = sortino = None
     trades_per_year = None
     if n >= 5:
         times = sorted(t.exit_time for t in trades)
@@ -189,10 +218,13 @@ def compute_metrics(trades: List[TradeRecord], notional: float) -> dict:
             stdev_r = statistics.pstdev(returns)
             if stdev_r > 0:
                 sharpe = mean_r / stdev_r * math.sqrt(trades_per_year)
+            downside_dev = (statistics.mean(min(r, 0.0) ** 2 for r in returns)) ** 0.5
+            if downside_dev > 0:
+                sortino = mean_r / downside_dev * math.sqrt(trades_per_year)
 
     return {
         "n_trades": n, "wins": wins, "losses": losses, "win_rate_pct": win_rate,
-        "profit_factor": profit_factor, "max_drawdown_pct": max_dd, "sharpe": sharpe,
+        "profit_factor": profit_factor, "max_drawdown_pct": max_dd, "sharpe": sharpe, "sortino": sortino,
         "net_pnl": sum(pnls), "net_pnl_pct": sum(pnls) / notional * 100 if notional else 0.0,
         "trades_per_year": trades_per_year,
     }

@@ -4,14 +4,15 @@ walkforward_medfreq.py
 
 Validation runner for the XAUUSD_MEDFREQ bot (src/medfreq_strategy.py).
 
-The strategy's parameters (EMA 8/21/200, RSI 14 with 40-65/35-60 bands,
-ATR 14 with 1.5x SL / 2.75x TP) are fully specified, not fit to data --
-so there is no parameter search to protect against overfitting here (see
-src/optimize.py for that, used by the lowfreq bot). What "walk-forward"
-means for a fixed-rule strategy like this is: run it continuously across
-the full real history (2018-present, real Dukascopy-derived H1 candles)
-so it's tested across genuinely different market regimes (2018 range,
-2020 COVID crash, 2022 inflation, 2024-2025 rally), then report:
+The strategy's parameters (M5 EMA 8/21, H4 200 EMA trend, H1 RSI 14 with
+40-65/35-60 bands, M5 ATR 14 with 1.5x SL / 2.75x TP) are fully specified,
+not fit to data -- so there is no parameter search to protect against
+overfitting here (see src/optimize.py for that, used by the lowfreq bot).
+What "walk-forward" means for a fixed-rule strategy like this is: run it
+continuously across the full real history (2018-present, real
+Dukascopy-derived M5 candles, H1/H4 resampled from M5) so it's tested
+across genuinely different market regimes (2018 range, 2020 COVID crash,
+2022 inflation, 2024-2025 rally), then report:
   - year-by-year performance (regime breakdown, nothing averaged away)
   - a development-period vs. out-of-sample split at 2025-07-01, matching
     the split boundary used for the lowfreq bot's validation, so the two
@@ -41,16 +42,16 @@ SYMBOL = "XAUUSD"
 
 def run(start: str, split: str, notional: float = 10_000.0, config: MedFreqConfig = None, log=print) -> dict:
     config = config or MedFreqConfig()
-    candles = data_dukascopy.load_h1_candles(start)
+    candles = data_dukascopy.load_m5_candles(start)
     if not candles:
-        raise RuntimeError(f"No cached Dukascopy H1 candles found from {start}. Run src.data_dukascopy first.")
+        raise RuntimeError(f"No cached Dukascopy M5 candles found from {start}. Run src.data_dukascopy first.")
 
     first = datetime.fromtimestamp(candles[0].open_time / 1000, tz=timezone.utc)
     last = datetime.fromtimestamp(candles[-1].open_time / 1000, tz=timezone.utc)
-    log(f"Loaded {len(candles)} real H1 candles ({first.date()} -> {last.date()}).")
-    log(f"Config: EMA({config.ema_fast},{config.ema_slow},trend={config.ema_trend}), "
-        f"RSI({config.rsi_period}) long={config.rsi_long} short={config.rsi_short}, "
-        f"ATR({config.atr_period}) SL={config.atr_sl_mult}x TP={config.atr_tp_mult}x\n")
+    log(f"Loaded {len(candles)} real M5 candles ({first.date()} -> {last.date()}).")
+    log(f"Config: M5 EMA({config.ema_fast},{config.ema_slow}), H4 trend EMA({config.h4_trend_ema}), "
+        f"H1 RSI({config.h1_rsi_period}) long={config.rsi_long} short={config.rsi_short}, "
+        f"M5 ATR({config.atr_period}) SL={config.atr_sl_mult}x TP={config.atr_tp_mult}x\n")
 
     trades = simulate(candles, config, SYMBOL, notional)
     log(f"Simulated {len(trades)} total trades over the full real history.\n")
@@ -85,7 +86,7 @@ def _fmt_metrics_row(label: str, m: dict) -> str:
 def print_report(result: dict) -> None:
     header = f"{'Period':14} {'Trades':7} {'Trd/Yr':>9} {'Win%':>7} {'PF':>8} {'MaxDD%':>8} {'Sharpe':>8} {'NetPnL%':>10}"
     print("\n" + "=" * len(header))
-    print("MEDFREQ (XAUUSD, H1) -- FULL HISTORY + DEV/OOS SPLIT")
+    print("MEDFREQ (XAUUSD, MTF: M5 exec / H1 momentum / H4 trend) -- FULL HISTORY + DEV/OOS SPLIT")
     print("=" * len(header))
     print(header)
     print("-" * len(header))

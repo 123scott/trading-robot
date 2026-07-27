@@ -12,14 +12,16 @@ engine:
                      ~2-3 trades/year. This is the bot validated in
                      data/performance_report.md's train/test section.
 
-  XAUUSD_MEDFREQ  -- the new intraday (H1) EMA(8,21) crossover, 200 EMA
-                     trend filter, RSI(14) momentum filter, ATR-based
-                     stop-loss/take-profit (medfreq_strategy.py). Targets
-                     50-75 trades/year. Real H1 data from
-                     src/data_dukascopy.py (Yahoo/Deriv can't supply
-                     2018-present intraday history). No memory-system
-                     integration yet (v1, raw only) -- see module
-                     docstring in medfreq_strategy.py.
+  XAUUSD_MEDFREQ  -- Top-Down Multi-Timeframe (MTF) model: H4 200 EMA
+                     macro trend + H1 RSI(14) momentum, both forward-filled
+                     (no lookahead) onto M5, which is where the EMA(8,21)
+                     crossover actually triggers entries and ATR-based
+                     stop-loss/take-profit are computed (medfreq_strategy.py).
+                     Targets 50-75 trades/year. Real M5 data (H1/H4 are
+                     pure resamples of it) from src/data_dukascopy.py
+                     (Yahoo/Deriv can't supply 2018-present intraday
+                     history). No memory-system integration yet (v1, raw
+                     only) -- see module docstring in medfreq_strategy.py.
 
 Both profiles log their trades into the SAME data/ledger.csv, each under
 its own ledger_symbol tag, so src/report.py, src/monte_carlo.py, and
@@ -76,10 +78,10 @@ def run_medfreq(notional: float = 10_000.0, start: str = "2018-01-01",
     if reset:
         _clear_ledger_symbol(MEDFREQ_LEDGER_SYMBOL)
     log(f"=== XAUUSD_MEDFREQ (H1 EMA/RSI/ATR, raw mode -- no memory yet) ===")
-    candles = data_dukascopy.load_h1_candles(start)
+    candles = data_dukascopy.load_m5_candles(start)
     if not candles:
-        raise RuntimeError(f"No cached H1 candles from {start}. Run: python -m src.data_dukascopy --start {start}")
-    log(f"Loaded {len(candles)} real H1 candles.")
+        raise RuntimeError(f"No cached M5 candles from {start}. Run: python -m src.data_dukascopy --start {start}")
+    log(f"Loaded {len(candles)} real M5 candles.")
 
     trades = simulate(candles, MedFreqConfig(), REAL_SYMBOL, notional)
     log(f"Simulated {len(trades)} trades. Logging to ledger as {MEDFREQ_LEDGER_SYMBOL}...")
@@ -87,8 +89,8 @@ def run_medfreq(notional: float = 10_000.0, start: str = "2018-01-01",
     for t in trades:
         entry_action = "BUY" if t.direction == Direction.LONG else "SELL"
         exit_action = "SELL" if t.direction == Direction.LONG else "BUY"
-        reason = f"EMA(8/21) {'golden' if t.direction == Direction.LONG else 'death'} cross, " \
-                 f"200EMA trend + RSI confirmed"
+        reason = f"M5 EMA(8/21) {'golden' if t.direction == Direction.LONG else 'death'} cross, " \
+                 f"H4 200EMA trend + H1 RSI confirmed"
         entry_ts = t.entry_time.isoformat()
         exit_ts = t.exit_time.isoformat()
         memory.record_trade(MEDFREQ_LEDGER_SYMBOL, entry_action, t.entry_price, round(t.qty, 6),
