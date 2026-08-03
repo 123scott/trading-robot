@@ -133,6 +133,26 @@ def _done_hours() -> set:
         return {row["hour_start_utc"] for row in csv.DictReader(f)}
 
 
+def clear_error_hours() -> int:
+    """
+    Removes ERROR-marked rows from the 'hours done' tracker so a subsequent
+    fetch_and_cache_range() call retries exactly those hours (rate-limit
+    exhaustion is recoverable; genuinely-empty hours are marked "0", not
+    "ERROR", and are left alone). Returns how many were cleared.
+    """
+    _ensure_cache()
+    with open(HOURS_DONE_PATH, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    kept = [r for r in rows if r["tick_count"] != "ERROR"]
+    cleared = len(rows) - len(kept)
+    if cleared:
+        with open(HOURS_DONE_PATH, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=HOURS_HEADER)
+            w.writeheader()
+            w.writerows(kept)
+    return cleared
+
+
 def _hour_range(start: datetime, end: datetime):
     cur = start.replace(minute=0, second=0, microsecond=0)
     while cur < end:
