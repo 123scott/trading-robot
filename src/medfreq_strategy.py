@@ -64,6 +64,16 @@ class MedFreqConfig:
     h1_rsi_period: int = 14
     rsi_long: tuple = (40.0, 65.0)
     rsi_short: tuple = (35.0, 60.0)
+    # Anti-whipsaw filters -- added after the first full-history run showed
+    # ~1,120 trades/year (vs. a 50-75 target) with catastrophic drawdown,
+    # traced to the M5 EMA(8,21) firing on pure noise during choppy periods
+    # and immediately re-entering the same direction seconds after being
+    # stopped out (see data/performance_report.md for the diagnosed
+    # example: 5 same-direction re-entries in 6 hours on 2024-02-21).
+    # Neither value was tuned to hit the trade-count target -- they're
+    # standard, independently-justified noise filters:
+    confirm_bars: int = 3   # crossover must hold for 3 consecutive M5 bars (15min) before it's treated as real
+    cooldown_bars: int = 24  # 2 hours must pass after ANY exit before a new entry is considered
 
 
 @dataclass
@@ -117,6 +127,9 @@ def simulate(m5_candles: List[Candle], config: MedFreqConfig, symbol: str,
 
     trades: List[TradeRecord] = []
     position: Optional[dict] = None
+    same_side_streak = 0     # consecutive bars fast has been on its current side of slow
+    prev_side = 0            # +1 fast>slow, -1 fast<slow, 0 unknown
+    bars_since_exit = config.cooldown_bars  # no cooldown restriction before the first exit
 
     for i in range(1, len(m5_candles)):
         if None in (fast[i], slow[i], fast[i - 1], slow[i - 1], trend_on_m5[i], rsi_on_m5[i], atr_vals[i]):
@@ -124,6 +137,12 @@ def simulate(m5_candles: List[Candle], config: MedFreqConfig, symbol: str,
 
         c = m5_candles[i]
         t = datetime.fromtimestamp(c.open_time / 1000, tz=timezone.utc)
+
+        curr_side = 1 if fast[i] > slow[i] else (-1 if fast[i] < slow[i] else 0)
+        same_side_streak = same_side_streak + 1 if curr_side == prev_side else 1
+        prev_side = curr_side
+        if bars_since_exit < config.cooldown_bars:
+            bars_since_exit += 1
 
         if position is not None:
             exit_price = exit_reason = None
@@ -152,14 +171,19 @@ def simulate(m5_candles: List[Candle], config: MedFreqConfig, symbol: str,
                     exit_reason=exit_reason, qty=qty, pnl=pnl,
                 ))
                 position = None
+                bars_since_exit = 0
 
         if position is not None:
             continue
+        if bars_since_exit < config.cooldown_bars:
+            continue
 
-        prev_diff = fast[i - 1] - slow[i - 1]
-        curr_diff = fast[i] - slow[i]
-        golden = prev_diff <= 0 and curr_diff > 0
-        death = prev_diff >= 0 and curr_diff < 0
+        # Confirmed crossover: fast has been on its current side for exactly
+        # confirm_bars bars (fires once per crossover, not every bar of a
+        # persistent trend) -- filters the single-bar noise flips that were
+        # driving the whipsaw losses (see MedFreqConfig docstring).
+        golden = curr_side == 1 and same_side_streak == config.confirm_bars
+        death = curr_side == -1 and same_side_streak == config.confirm_bars
         price = c.close
         a = atr_vals[i]
         r = rsi_on_m5[i]

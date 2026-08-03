@@ -11,6 +11,134 @@ beat their own drawdown/cost hurdles -- but "profitable in a backtest" and
 below only weakly supports the second one. Details below; recommendations
 at the end.
 
+## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
+
+**Verdict up front: as specified, this strategy loses money with
+statistical certainty. Do not run it live.** Full diagnosis and what
+would actually need to change below -- this is a real, useful finding,
+not a wasted build.
+
+### What was built and tested
+
+Per spec: M5 execution (EMA 8/21 crossover), H4 200 EMA macro trend
+filter, H1 RSI(14) momentum filter (40-65 long / 35-60 short), both
+higher-timeframe indicators forward-filled onto M5 using only the most
+recently *closed* bar (no lookahead), M5 ATR(14)-based stop (1.5x) and
+target (2.75x), $0.30 spread + slippage + commission enforced. Real data:
+608,791 M5 candles built from Dukascopy tick data, 2018-01-01 to present,
+99.995% hour coverage (cross-validated against real Yahoo H1 data earlier
+in this project: 0.12% mean difference) -- H1 and H4 are pure resamples
+of the same M5 data, so there was no additional network cost to support
+the multi-timeframe requirement.
+
+### First run: catastrophic overtrading
+
+The literal spec produced **9,507 trades over 8.5 years (~1,123/year,
+~15-22x the 50-75/year target)**, Profit Factor 0.43-0.71 in every single
+year tested, and a **562% max drawdown** in the development period (the
+backtest's notional went net negative -- in real trading this account
+would have been margin-called long before reaching that number).
+
+**Diagnosed, not just observed**: pulled the actual trade log for a
+sample chop window (2024-02-21 to 02-26) and found the mechanism --
+repeated same-direction re-entries within minutes of being stopped out.
+Example: three LONG entries on 2024-02-21 at 09:50, 12:10, and 14:00,
+each stopped out within 10-85 minutes, immediately re-entering LONG
+again into the same chop. The M5 EMA(8,21) crossover, even filtered by
+H4 trend and H1 RSI, fires on pure short-term noise during ranging
+periods, and nothing in the original spec stops it from repeatedly
+re-entering the same losing trade.
+
+### Fix attempted: anti-whipsaw hardening
+
+Added two standard, independently-justified filters (not tuned to hit a
+target number -- see `MedFreqConfig` docstring in `medfreq_strategy.py`):
+- **Crossover confirmation**: the EMA(8,21) relationship must hold for 3
+  consecutive M5 bars (15 min) before being treated as a real signal,
+  filtering single-bar noise flips.
+- **Cooldown**: 24 M5 bars (2 hours) must pass after *any* exit before a
+  new entry is considered, breaking the immediate-re-entry whipsaw loop.
+
+Result on the same diagnostic window: 39 trades -> 26 trades (confirmation
++ cooldown) -- directionally correct, but win rate stayed ~19-20%. On the
+**full 8.5-year dataset**:
+
+| Metric | Original spec | After anti-whipsaw fix | Target |
+|---|---:|---:|---:|
+| Trades/year (OOS) | 1,122.7 | 743.6 | 50-75 |
+| Profit Factor (OOS) | 0.66 | 0.63 | >1.5 |
+| Sharpe (OOS) | -6.03 | -5.55 | >0.8 |
+| Max Drawdown (full) | 562.94% | 374.24% | -- |
+
+**The fix reduced trade count by ~33% and made the drawdown less
+catastrophic, but did not fix the underlying problem.** Profit Factor and
+Sharpe are still deeply negative, consistently, across every one of the 9
+years tested (2018 through 2026, no exceptions) -- this is not a
+regime-specific fluke.
+
+### Full statistical picture (final, hardened version)
+
+- **Win rate**: 26.8% | **Profit Factor**: 0.44 | **Max Drawdown**: 221.95%
+- **Sharpe**: -7.41 | **Sortino**: -9.23
+- **Equity curve linear fit**: R² = 0.99 -- extremely linear, but the
+  slope is **negative** (-$3.49/trade). A high R² here doesn't mean
+  "reliable strategy," it means "reliably losing money": the decline is
+  remarkably steady, not driven by a few catastrophic outlier trades.
+- **Monte Carlo** (5,000 bootstrap resamples of the real 6,347 closed
+  trades): 95% CI for Total PnL is **[-241.88%, -201.46%]** -- every
+  single resampled path lost money. **P(net loss) = 100.0%.**
+- **Edge significance (t-test)**: t = -21.54, p < 0.000001 on n=6,347
+  trades. This is not a small-sample or noisy result -- with this much
+  data, the negative edge is about as statistically certain as this kind
+  of test can show.
+
+### Why this happened (root cause, not just symptoms)
+
+The reward:risk ratio (1.5x SL / 2.75x TP = 1:1.83) needs a ~35.3%
+win rate just to break even. The strategy achieves 26-33% depending on
+the period -- consistently below that breakeven line. M5 is a genuinely
+noisy execution timeframe for a lagging trigger like an EMA crossover:
+by the time the crossover confirms, the short-term move it's chasing has
+often already reverted, especially in the ranging conditions gold spends
+much of its time in.
+
+### What would actually need to change (redesign, not re-tuning)
+
+Further parameter search on this exact design (more confirmation bars,
+longer cooldowns) risks exactly the overfitting this whole exercise was
+meant to avoid, and the diagnostic testing above already shows tightening
+those knobs further keeps reducing trade count without fixing the win
+rate. A real fix needs to change the entry mechanism itself:
+
+1. **Replace the crossover trigger with a pullback entry.** Instead of
+   chasing a lagging EMA(8,21) cross, wait for price to pull back *to*
+   the M5 21-EMA (or a similar reference) and confirm a bounce in the H4
+   trend direction. This is the standard, more robust way to combine a
+   fast execution timeframe with higher-timeframe trend/momentum filters
+   -- trading pullbacks *with* the trend rather than chasing every
+   crossover.
+2. **Add a volatility/chop regime filter.** Nothing in the current
+   design detects "the market is ranging, stand aside" -- e.g. requiring
+   M5 ATR to be expanding relative to its own recent average, or an
+   ADX-style trend-strength threshold, before allowing entries at all.
+   This targets the diagnosed root cause directly.
+3. **Revisit the SL/TP math.** At a 1:1.83 reward:risk, the strategy
+   needs >35.3% win rate to break even and isn't getting it. Either the
+   entry needs to be selective enough to push win rate above that line,
+   or the reward:risk needs to widen further (at the cost of fewer TP
+   hits) -- these trade off against each other and should be tested
+   together, not independently.
+4. **Test a slower execution timeframe.** If a chop filter and pullback
+   entry still can't clear breakeven on M5, that's evidence M5 itself is
+   too noisy for this concept regardless of filtering, and M15/M30
+   execution (still real, cacheable from the same Dukascopy tick data)
+   is worth testing before concluding the MTF concept itself doesn't
+   work for XAUUSD.
+5. **Use the same rigorous methodology already built** (real data,
+   realistic costs, Monte Carlo, edge t-test, dev/OOS split) to evaluate
+   each redesign attempt -- this infrastructure isn't the problem, the
+   entry mechanism is.
+
 ## What changed this round: realistic transaction costs
 
 Every previous report in this project's history used **zero-cost fills**

@@ -105,6 +105,35 @@ profit factor (4.34 vs 1.87), and held up directionally out-of-sample --
 **but the 1-year test window only produced 1-6 closed trades, too few to
 trust statistically.** Full writeup in `data/performance_report.md`.
 
+### Two bot profiles: XAUUSD_LOWFREQ and XAUUSD_MEDFREQ (`src/bot.py`)
+```
+python -m src.bot --profile lowfreq --mode memory --start 2018-01-01
+python -m src.bot --profile medfreq --start 2018-01-01
+```
+One engine, two isolated ledger-tagged profiles (each usable directly with
+`report.py`/`monte_carlo.py`/`alpha_test.py`):
+
+- **XAUUSD_LOWFREQ** -- the daily SMA(7,50) + memory system above. This is
+  the validated, working bot.
+- **XAUUSD_MEDFREQ** -- Top-Down Multi-Timeframe model (`medfreq_strategy.py`):
+  H4 200 EMA trend + H1 RSI(14) momentum forward-filled onto M5 (no
+  lookahead -- `align_htf_to_m5`), M5 EMA(8,21) crossover trigger, M5
+  ATR-based SL/TP. Real M5/H1/H4 data via `src/data_dukascopy.py`
+  (Dukascopy tick feed -- Yahoo/Deriv can't supply 2018-present intraday
+  history; H1/H4 are pure resamples of the cached M5 data, so no extra
+  fetch cost). **Verdict: fails decisively.** Original spec produced
+  ~1,123 trades/year (vs. 50-75 target) with catastrophic whipsaw losses,
+  diagnosed to repeated same-direction re-entries within minutes of being
+  stopped out during chop. Added confirmation+cooldown anti-whipsaw
+  filters (33% trade reduction) -- helped but did not fix the core
+  problem: Profit Factor 0.44, Sharpe -7.41, Monte Carlo 100% probability
+  of loss across 5,000 resamples, edge t-test p<0.000001 (statistically
+  certain negative edge). Root cause and concrete redesign
+  recommendations (pullback entry instead of crossover, chop/volatility
+  filter, SL:TP math, slower execution timeframe) in
+  `data/performance_report.md` -- this needs a different entry mechanism,
+  not more parameter tuning on the current one.
+
 ### Live monitoring (`src/live_monitor.py`)
 ```
 python -m src.live_monitor --paper --symbol XAUUSD_DERIV --notional 100
