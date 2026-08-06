@@ -145,16 +145,25 @@ automatically with exponential backoff on connection drops (a real
 failure observed in testing). Currently running in the background of the
 development session that produced this summary.
 
-### MT5 execution (`src/mt5_executor.py`) -- separate track, untested here
-Connection, lot sizing, order placement/closing against a real MT5
-terminal. Defaults to refusing non-demo accounts. **The `MetaTrader5`
-Python package has no macOS/Linux build** (verified: won't even install
-here), so this module has been reviewed against the documented API but
-never executed. Run `python -m src.mt5_executor` on an actual
-Windows/MT5 machine to validate the connection before trusting anything
-else in it. Credentials load from a gitignored `.env` (see
-`.env.example`) -- never commit real credentials, never paste them into
-a chat.
+### MT5 execution (`src/mt5_executor.py`, `src/mt5_live.py`) -- separate track, untested here
+`mt5_executor.py`: connection, lot sizing, order placement/closing
+against a real MT5 terminal. Defaults to refusing non-demo accounts (no
+`allow_live` path is ever exposed by the live driver's CLI). `mt5_live.py`:
+wires the existing crossover + memory decision logic to real (demo)
+order placement -- fetches daily candles from MT5 directly, runs the same
+`detect_crossovers`/`PositionTracker`/`memory.check_memory` used by
+`replay.py`/`live_monitor.py`, and on a memory-approved signal places an
+ATR-based-SL/TP order sized by risk percentage (not notional -- the
+backtested strategy has no stop-loss, so this adds one specifically for
+real order placement; see the "no explicit stop-loss" caveat below).
+Logs every decision to `data/mt5_live_trades.csv`, kept isolated from
+`data/ledger.csv` the same way `live_monitor.py`'s paper trades are.
+**The `MetaTrader5` Python package has no macOS/Linux build** (verified:
+won't even install here), so neither module has been executed -- both
+are reviewed against the documented API, not run. Exact step-by-step
+Windows setup is in `MT5_SETUP.md`. Credentials load from a gitignored
+`.env` (see `.env.example`) -- never commit real credentials, never
+paste them into a chat.
 
 ## Known Limitations / Honest Caveats
 
