@@ -145,25 +145,38 @@ automatically with exponential backoff on connection drops (a real
 failure observed in testing). Currently running in the background of the
 development session that produced this summary.
 
-### MT5 execution (`src/mt5_executor.py`, `src/mt5_live.py`) -- separate track, untested here
-`mt5_executor.py`: connection, lot sizing, order placement/closing
-against a real MT5 terminal. Defaults to refusing non-demo accounts (no
-`allow_live` path is ever exposed by the live driver's CLI). `mt5_live.py`:
-wires the existing crossover + memory decision logic to real (demo)
-order placement -- fetches daily candles from MT5 directly, runs the same
-`detect_crossovers`/`PositionTracker`/`memory.check_memory` used by
-`replay.py`/`live_monitor.py`, and on a memory-approved signal places an
-ATR-based-SL/TP order sized by risk percentage (not notional -- the
-backtested strategy has no stop-loss, so this adds one specifically for
-real order placement; see the "no explicit stop-loss" caveat below).
-Logs every decision to `data/mt5_live_trades.csv`, kept isolated from
-`data/ledger.csv` the same way `live_monitor.py`'s paper trades are.
-**The `MetaTrader5` Python package has no macOS/Linux build** (verified:
-won't even install here), so neither module has been executed -- both
-are reviewed against the documented API, not run. Exact step-by-step
-Windows setup is in `MT5_SETUP.md`. Credentials load from a gitignored
-`.env` (see `.env.example`) -- never commit real credentials, never
-paste them into a chat.
+### MT5 execution -- ZeroMQ bridge (native macOS), untested end-to-end
+The `MetaTrader5` Python package has no macOS/Linux build (verified:
+won't even install here), so live execution runs through a ZeroMQ socket
+bridge instead: `src/mt5_zmq_bridge.py` (Python side, runs natively on
+this Mac) talks JSON over a local REQ/REP socket to
+`mt5_bridge_ea/AmaroZmqBridge.mq5` (an Expert Advisor running inside an
+actual MT5 terminal -- MetaQuotes doesn't ship a native macOS terminal
+either, so that piece still needs Windows/a VM/a broker's Mac MT5 build;
+see `MT5_SETUP.md`). `src/mt5_live.py` wires the existing crossover +
+memory decision logic (`detect_crossovers`/`PositionTracker`/
+`memory.check_memory`, same as `replay.py`/`live_monitor.py`) to this
+bridge -- on a memory-approved signal it places an ATR-based-SL/TP order
+sized by risk percentage (not notional -- the backtested strategy has no
+stop-loss, so this adds one specifically for real order placement; see
+the "no explicit stop-loss" caveat below). Logs every decision to
+`data/mt5_live_trades.csv`, kept isolated from `data/ledger.csv` the
+same way `live_monitor.py`'s paper trades are.
+
+Safety is enforced in two independent places: the EA refuses to even
+initialize on a non-demo account (a real-money account can never load
+it), and `mt5_zmq_bridge.connect()` checks again as defense in depth --
+no `--allow-live` flag exists anywhere in this path. Real side benefit:
+no MT5 credentials ever pass through Python or a `.env` file at all --
+you log into the terminal manually via its own GUI. The Python↔EA wire
+protocol (every command, plus timeout/reconnect handling) is verified
+end-to-end against a dummy responder; the EA's own MQL5 trade calls are
+reviewed against MQL5's documented API but unverified against a real
+terminal (none available in this dev environment) -- validate on a demo
+account before trusting it. An older Windows-native path
+(`src/mt5_executor.py`, direct `MetaTrader5` package calls) remains in
+the repo, unused by default, as a reference for anyone who does end up
+on native Windows.
 
 ## Known Limitations / Honest Caveats
 

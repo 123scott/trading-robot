@@ -2,23 +2,24 @@
 """
 mt5_live.py
 
-*** WINDOWS-ONLY, UNTESTED -- SAME CAVEAT AS mt5_executor.py ***
-Written and reviewed against the documented MT5 API; never executed,
-because the `MetaTrader5` package has no macOS/Linux build. Run
-`python -m src.mt5_executor` (the connectivity smoke test) successfully
-on the real Windows/MT5 machine FIRST, before running this.
-
 Connects the existing strategy + memory decision logic (the same
 detect_crossovers / PositionTracker / memory.check_memory used by
-src.replay and src.live_monitor) to a live MT5 terminal and places real
-orders against it -- but `mt5_executor.connect()` hard-refuses any
-account that isn't flagged as a demo account, and this module never
-passes `allow_live=True`. In practice that means: everything this script
-does trades demo/paper money by construction, not because of a flag you
-have to remember to set, but because there is no code path here that can
-touch a real-money account. To ever change that would require deliberately
-editing mt5_executor.connect()'s call site -- a real decision, not an
-accident.
+src.replay and src.live_monitor) to a live MT5 terminal via
+src.mt5_zmq_bridge -- a ZeroMQ socket connector to the companion
+mt5_bridge_ea/AmaroZmqBridge.mq5 Expert Advisor, used INSTEAD OF the
+Windows-only MetaTrader5 Python package (see mt5_executor.py, which
+remains here unused-by-default as a reference/alternative for anyone who
+does end up running this on native Windows). This module now runs
+entirely natively on macOS/Linux; only the MT5 terminal + EA (the actual
+order-execution "hands") still needs an MT5 runtime somewhere.
+
+`bridge.connect()` hard-refuses any account that isn't flagged as a demo
+account, and the EA itself refuses to even initialize on a non-demo
+account (defense in depth -- see AmaroZmqBridge.mq5's OnInit). Neither
+this module nor either half of the bridge exposes any path to a
+real-money account. Genuine side benefit of this architecture: no MT5
+login credentials ever pass through this module, or any Python code, or
+a .env file -- you log into the terminal manually via its own GUI.
 
 This is a NEW risk-management layer, not a replication of the backtest:
 the backtested strategy (src/trading_robot.py) has no stop-loss -- it
@@ -30,12 +31,9 @@ SL/TP. This means live/demo results will NOT exactly reproduce the
 historical backtest numbers -- that's intentional, not a bug.
 
 Position sizing is risk-based (risk a fixed dollar amount per trade,
-sized against the ATR stop distance via mt5_executor.calc_lot_size),
-which is different from the backtest's notional-based sizing
-(trading_robot.py buys/sells a fixed dollar notional regardless of
-distance to stop). Same reasoning: notional-only sizing has no concept
-of per-trade risk, which is fine for a backtest comparing strategies but
-not for real order placement.
+sized against the ATR stop distance via bridge.calc_lot_size), which is
+different from the backtest's notional-based sizing (trading_robot.py
+buys/sells a fixed dollar notional regardless of distance to stop).
 
 Trade decisions are logged to data/mt5_live_trades.csv -- kept separate
 from data/ledger.csv (same isolation pattern as live_monitor.py's
@@ -44,8 +42,14 @@ system's backtest-derived history. Memory lookups (memory.check_memory)
 still read the shared data/ledger.csv, i.e. this benefits from
 backtest-learned losses without writing back into that ledger.
 
-Usage (on the Windows/MT5 machine, after `python -m src.mt5_executor`
-has been verified to connect successfully):
+*** UNTESTED end-to-end -- see mt5_zmq_bridge.py and
+mt5_bridge_ea/AmaroZmqBridge.mq5 for what's independently verified
+(the Python<->EA wire protocol) vs. what still needs validating against
+a real MT5 terminal (the EA's own MQL5 trade calls). ***
+
+Usage (after MT5_SETUP.md's steps -- terminal running, EA attached and
+showing "bound tcp://*:5555..." in its Experts log, connectivity smoke
+test via `python -m src.mt5_zmq_bridge` passing first):
     python -m src.mt5_live --symbol XAUUSD --mt5-symbol XAUUSD --notional 100 --risk-pct 1.0
     python -m src.mt5_live --symbol XAUUSD --mt5-symbol XAUUSD.a --max-iterations 1   # smoke test, one poll then exit
 
@@ -62,19 +66,13 @@ import csv
 import os
 import time
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
-from src.candle import Candle
 from src.indicators import atr as compute_atr
 from src.backtest_structures import detect_crossovers
 from src.backtest_entries import Action, PositionTracker
 from src import memory
-from src import mt5_executor
-
-try:
-    import MetaTrader5 as mt5
-except ImportError:
-    mt5 = None
+from src import mt5_zmq_bridge as bridge
 
 MAGIC = 202607
 LIVE_LOG_PATH = os.path.join(memory.DATA_DIR, "mt5_live_trades.csv")
@@ -109,40 +107,27 @@ def _log_live_trade(symbol: str, mt5_symbol: str, action: str, price: Optional[f
                                  reason, outcome, f"{pnl:.2f}", comment])
 
 
-def _rates_to_candles(rates) -> List[Candle]:
-    """Converts MetaTrader5's numpy structured array (from copy_rates_from_pos) to our Candle type."""
-    return [Candle(open_time=int(r["time"]) * 1000, open=float(r["open"]), high=float(r["high"]),
-                    low=float(r["low"]), close=float(r["close"]), volume=float(r["tick_volume"]))
-            for r in rates]
-
-
-def _fetch_daily_history(mt5_symbol: str, count: int) -> List[Candle]:
-    """Fetches the most recent `count` COMPLETED daily bars (pos=1 skips the still-forming current day)."""
-    rates = mt5.copy_rates_from_pos(mt5_symbol, mt5.TIMEFRAME_D1, 1, count)
-    if rates is None or len(rates) == 0:
-        raise RuntimeError(f"copy_rates_from_pos returned no data for {mt5_symbol}: {mt5.last_error()}")
-    return _rates_to_candles(rates)
-
-
 def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional: float = 10_000.0,
              risk_pct: float = DEFAULT_RISK_PCT, atr_sl_mult: float = DEFAULT_ATR_SL_MULT,
              atr_tp_mult: float = DEFAULT_ATR_TP_MULT, seed_candles: int = 60, poll_seconds: float = 3600.0,
-             max_iterations: Optional[int] = None, env_path: Optional[str] = None, log=print) -> None:
+             max_iterations: Optional[int] = None, host: str = bridge.DEFAULT_HOST,
+             port: int = bridge.DEFAULT_PORT, log=print) -> None:
     """
-    Connects to MT5 (demo-only -- see module docstring), fast-forwards
-    strategy state through recent history, then polls for newly-completed
-    daily bars and places real (demo) orders on confirmed, memory-approved
-    signals. `notional` is used only for the memory system's price-match
-    bookkeeping (mirrors how the rest of this project tags decisions);
-    actual order size comes from `risk_pct` + the ATR stop distance.
+    Connects to the MT5 bridge EA (demo-only -- see module docstring),
+    fast-forwards strategy state through recent history, then polls for
+    newly-completed daily bars and places real (demo) orders on
+    confirmed, memory-approved signals. `notional` is used only for the
+    memory system's price-match bookkeeping (mirrors how the rest of
+    this project tags decisions); actual order size comes from
+    `risk_pct` + the ATR stop distance.
     """
     mt5_symbol = mt5_symbol or symbol
-    info = mt5_executor.connect(env_path)
-    log(f"[MT5 LIVE] Connected. Login {info.get('login')} on {info.get('server')} "
+    info = bridge.connect(host=host, port=port)
+    log(f"[MT5 LIVE] Connected via ZeroMQ bridge. Login {info.get('login')} on {info.get('server')} "
         f"(demo, balance {info.get('balance')} {info.get('currency')}). Trading {mt5_symbol} as '{symbol}'.\n")
 
     try:
-        history = _fetch_daily_history(mt5_symbol, seed_candles)
+        history = bridge.get_rates(mt5_symbol, "D1", start_pos=1, count=seed_candles)
         log(f"[MT5 LIVE] Seeded {len(history)} daily candles through "
             f"{datetime.fromtimestamp(history[-1].open_time / 1000, tz=timezone.utc).date()}.")
 
@@ -156,7 +141,7 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
 
         while max_iterations is None or iteration < max_iterations:
             iteration += 1
-            latest = _fetch_daily_history(mt5_symbol, 1)
+            latest = bridge.get_rates(mt5_symbol, "D1", start_pos=1, count=1)
             if latest and latest[0].open_time > last_seen_open_time:
                 history.append(latest[0])
                 last_seen_open_time = latest[0].open_time
@@ -185,14 +170,14 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
                             if not a or a <= 0:
                                 log("  => [MT5 LIVE] SKIPPED: ATR not yet available (insufficient history).\n")
                             else:
-                                tick = mt5.symbol_info_tick(mt5_symbol)
-                                entry_est = tick.ask if tick else intent.price
+                                tick = bridge.get_tick(mt5_symbol)
+                                entry_est = tick["ask"]
                                 sl = entry_est - atr_sl_mult * a
                                 tp = entry_est + atr_tp_mult * a
-                                balance = mt5_executor.get_balance()
+                                balance = bridge.get_balance()
                                 risk_amount = balance * (risk_pct / 100.0)
-                                lot = mt5_executor.calc_lot_size(mt5_symbol, risk_amount, atr_sl_mult * a)
-                                result = mt5_executor.place_market_order(mt5_symbol, "buy", lot, sl=sl, tp=tp, magic=MAGIC)
+                                lot = bridge.calc_lot_size(mt5_symbol, risk_amount, atr_sl_mult * a)
+                                result = bridge.place_market_order(mt5_symbol, "buy", lot, sl=sl, tp=tp, magic=MAGIC)
                                 tracker.apply(Action.BUY)
                                 if result.success:
                                     log(f"  => [MT5 LIVE] BUY {lot} lots @ {result.price} (SL {sl:.2f} / TP {tp:.2f}, "
@@ -204,7 +189,7 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
                                                  "OPEN" if result.success else "FAILED", 0.0, result.comment)
 
                         elif final_action == "SELL":
-                            pos = mt5_executor.get_open_position(mt5_symbol, magic=MAGIC)
+                            pos = bridge.get_open_position(mt5_symbol, magic=MAGIC)
                             tracker.apply(Action.SELL)
                             if pos is None:
                                 log("  => [MT5 LIVE] SELL signal but no tracked open position found -- nothing to close.\n")
@@ -212,12 +197,12 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
                                                  None, intent.reason, "NO_POSITION", 0.0, "")
                             else:
                                 entry_price, volume = pos["price_open"], pos["volume"]
-                                result = mt5_executor.close_position(mt5_symbol, pos["ticket"], volume,
-                                                                      "buy", magic=MAGIC, comment="amaro-bot-close")
-                                sym_info = mt5.symbol_info(mt5_symbol)
+                                result = bridge.close_position(mt5_symbol, pos["ticket"], volume,
+                                                                "buy", magic=MAGIC, comment="amaro-bot-close")
+                                sym_info = bridge.get_symbol_info(mt5_symbol)
                                 pnl = 0.0
-                                if result.success and sym_info and sym_info.trade_tick_size:
-                                    tick_value_per_unit = sym_info.trade_tick_value / sym_info.trade_tick_size
+                                if result.success and sym_info.get("tick_size"):
+                                    tick_value_per_unit = sym_info["tick_value"] / sym_info["tick_size"]
                                     pnl = (result.price - entry_price) * tick_value_per_unit * volume
                                 outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
                                 if result.success:
@@ -233,7 +218,7 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
                 time.sleep(poll_seconds)
 
     finally:
-        mt5_executor.disconnect()
+        bridge.disconnect()
         log("[MT5 LIVE] Disconnected.")
 
 
@@ -241,7 +226,8 @@ def _cli() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Live MT5 demo execution of the crossover+memory strategy. Refuses non-demo accounts.")
+        description="Live MT5 demo execution of the crossover+memory strategy, via the ZeroMQ bridge EA. "
+                    "Refuses non-demo accounts.")
     parser.add_argument("--symbol", default="XAUUSD", help="Internal symbol name for cost/memory/ledger tagging.")
     parser.add_argument("--mt5-symbol", default=None,
                          help="Broker's actual tradeable symbol name if different (e.g. XAUUSD.a) -- check Market Watch.")
@@ -253,11 +239,13 @@ def _cli() -> None:
     parser.add_argument("--seed-candles", type=int, default=60)
     parser.add_argument("--poll-seconds", type=float, default=3600.0, help="How often to check for a new daily bar.")
     parser.add_argument("--max-iterations", type=int, default=None, help="Stop after N polls (omit to run until Ctrl+C).")
+    parser.add_argument("--host", default=bridge.DEFAULT_HOST, help="Bridge EA host (127.0.0.1, or a VM's private IP).")
+    parser.add_argument("--port", type=int, default=bridge.DEFAULT_PORT, help="Bridge EA ZeroMQ port.")
     args = parser.parse_args()
 
     run_live(symbol=args.symbol, mt5_symbol=args.mt5_symbol, notional=args.notional, risk_pct=args.risk_pct,
               atr_sl_mult=args.atr_sl_mult, atr_tp_mult=args.atr_tp_mult, seed_candles=args.seed_candles,
-              poll_seconds=args.poll_seconds, max_iterations=args.max_iterations)
+              poll_seconds=args.poll_seconds, max_iterations=args.max_iterations, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

@@ -6,4 +6,5 @@ yfinance
 websockets
 certifi
 python-dotenv
+pyzmq
 MetaTrader5; sys_platform == "win32"
