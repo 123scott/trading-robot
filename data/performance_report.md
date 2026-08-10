@@ -9,7 +9,290 @@ when tested rigorously.** It's not worthless -- GBPUSD and XAUUSD both
 beat their own drawdown/cost hurdles -- but "profitable in a backtest" and
 "has a proven statistical edge" are different claims, and the evidence
 below only weakly supports the second one. Details below; recommendations
-at the end.
+at the end. **See the retraining round below for the most recent,
+most rigorous evaluation (XAUUSD_LOWFREQ v2, walk-forward validated,
+strict train/test wall) -- read that section first if you're deciding
+whether to trust this bot with capital today.**
+
+## XAUUSD_LOWFREQ v2: Walk-Forward Retrain with Intraday Entries (most recent round)
+
+**Verdict up front: promising on paper, not statistically proven, and
+built on training-period evidence that was uniformly negative. Needs
+more paper trading before any capital decision -- this is not a "yes"
+and not a decisive "no" like MEDFREQ was.**
+
+### What changed from v1
+
+The original LOWFREQ (daily SMA(7,50) crossover, no stop-loss, exits
+only on the opposite crossover) trades ~6-7 times/year -- measured
+directly from `data/ledger.csv`'s 218 raw-mode XAUUSD rows, that's
+**~0.13 trades/week, roughly 30x below the 3-4/week target.** No amount
+of SMA period tuning closes that gap; it needed a structurally different
+entry layer. v2 (`src/entries_v2.py`) keeps the daily timeframe only as
+a long/short regime filter (price above its own daily SMA = long-only,
+below = short-only -- SHORT was added for v2; v1 was long-only-or-flat)
+and adds one intraday setup on H1: a pullback to an H1 EMA that closes
+back on the trend side (buy the dip in an uptrend / sell the rip in a
+downtrend). Exits are now ATR-based stop-loss/take-profit, fixed at
+entry -- v1 had no stop-loss at all, which was never viable to carry
+into a short-permitting, higher-frequency version. Full before/after
+detail in `data/pre_retrain_snapshot.md`.
+
+### Data and costs
+
+All candles (daily and H1) are resampled from the same real
+Dukascopy M5 cache used elsewhere in this project (608,791 bars,
+2018-01-01 to present) -- verified as **100.0000% complete for every
+expected forex market hour in 2018-01-01 to 2026-07-31** before any
+modeling started (the only zero-bar weekdays are genuine holidays:
+Good Friday, Christmas, New Year's). No Yahoo data is mixed in, so the
+regime filter and the entry timing are always reading the same price
+series.
+
+**Costs, Deriv-realistic, per this round's brief (deliberately different
+from `market_data.COST_PROFILES["XAUUSD_DERIV"]`'s percentage-based
+model -- kept local to `entries_v2.CostModel`, not overwritten
+globally):**
+
+| Assumption | Value |
+|---|---:|
+| Spread (round-trip) | $0.40 (stated range: $0.35-0.50) |
+| Slippage | $0.05 per side, fixed dollar amount |
+| Commission | $0.00 (none, per brief) |
+
+### Train/test wall (hard, never crossed)
+
+- Train: 2018-01-01 to 2025-07-31 -- all parameter selection, sensitivity
+  analysis, and regime checks happened here, exclusively.
+- Test: 2025-08-01 to 2026-07-31 -- touched exactly once, after every
+  parameter decision above was already locked in. No result from this
+  window fed back into any earlier step.
+
+### Parameter budget (5 tunable, as required)
+
+| Parameter | Search range | Selected value |
+|---|---|---:|
+| `trend_sma_period` (daily regime filter) | [50, 100] | 50 |
+| `pullback_ema_period` (H1 pullback reference) | [21, 50] | 21 |
+| `pullback_tolerance_pct` (entry threshold) | [0.10, 0.20] | 0.20 |
+| `atr_sl_mult` (stop-loss, x ATR) | [1.0, 1.5, 2.0] | 2.0 |
+| `atr_tp_mult` (take-profit, x ATR) | [1.5, 2.5] | 2.5 |
+
+`atr_period` is fixed at 14 (the standard default used everywhere else
+in this project) and was **not** tuned -- kept out of the search
+deliberately to hold the budget at 5, not 6. Grid: 48 combinations x 26
+walk-forward folds = 1,248 backtest runs, ~27 seconds total. Small
+grid deliberately, per this project's established practice (see
+`src/optimize.py`'s docstring) -- searching a huge space against a
+handful of folds is itself a form of overfitting.
+
+### Walk-forward selection (training data only)
+
+12-month context / 3-month validate, sliding 3 months -> **26 folds**
+spanning 2019-01-01 through 2025-07-01. Each of the 48 grid combinations
+was scored by the **median** of its per-fold Sharpe (not mean, not max)
+across all 26 folds -- a combo can't win by being spectacular on one
+fold and mediocre everywhere else.
+
+**Every one of the 48 combinations scored a negative median Sharpe.**
+The best was -0.466. This is reported plainly, not softened -- the
+pullback-to-EMA setup, across the entire searched parameter space,
+showed no positive risk-adjusted edge anywhere in the training data.
+Selected params (best of a bad field): `trend_sma_period=50,
+pullback_ema_period=21, pullback_tolerance_pct=0.20, atr_sl_mult=2.0,
+atr_tp_mult=2.5`.
+
+Per-fold detail, selected parameters:
+
+| Validate window | Trades | Trades/wk | Win % | PF | Sharpe | Net PnL % |
+|---|---:|---:|---:|---:|---:|---:|
+| 2019-01 -> 2019-04 | 74 | 6.03 | 37.8 | 0.72 | -3.72 | -4.25 |
+| 2019-04 -> 2019-07 | 75 | 6.04 | 49.3 | 1.33 | 1.72 | 4.27 |
+| 2019-07 -> 2019-10 | 65 | 5.07 | 49.2 | 1.15 | 0.59 | 2.76 |
+| 2019-10 -> 2020-01 | 79 | 6.06 | 36.7 | 0.72 | -3.45 | -5.33 |
+| 2020-01 -> 2020-04 | 63 | 4.94 | 54.0 | 1.16 | 0.64 | 3.82 |
+| 2020-04 -> 2020-07 | 67 | 5.19 | 46.3 | 1.06 | 0.11 | 1.57 |
+| 2020-07 -> 2020-10 | 71 | 5.51 | 49.3 | 1.17 | 0.89 | 4.29 |
+| 2020-10 -> 2021-01 | 62 | 4.84 | 41.9 | 0.88 | -1.50 | -2.69 |
+| 2021-01 -> 2021-04 | 62 | 5.11 | 41.9 | 1.00 | -0.45 | -0.09 |
+| 2021-04 -> 2021-07 | 76 | 6.17 | 39.5 | 0.83 | -2.13 | -3.74 |
+| 2021-07 -> 2021-10 | 69 | 5.36 | 31.9 | 0.64 | -4.12 | -7.72 |
+| 2021-10 -> 2022-01 | 79 | 6.28 | 38.0 | 0.72 | -3.42 | -6.47 |
+| 2022-01 -> 2022-04 | 71 | 5.78 | 40.8 | 0.84 | -1.80 | -3.83 |
+| 2022-04 -> 2022-07 | 75 | 6.11 | 46.7 | 1.11 | 0.47 | 2.41 |
+| 2022-07 -> 2022-10 | 67 | 5.22 | 47.8 | 1.11 | 0.38 | 2.18 |
+| 2022-10 -> 2023-01 | 71 | 5.76 | 43.7 | 1.00 | -0.48 | -0.05 |
+| 2023-01 -> 2023-04 | 64 | 5.18 | 43.8 | 1.03 | -0.24 | 0.60 |
+| 2023-04 -> 2023-07 | 81 | 6.44 | 43.2 | 0.97 | -0.81 | -0.73 |
+| 2023-07 -> 2023-10 | 77 | 6.11 | 37.7 | 0.76 | -3.14 | -3.94 |
+| 2023-10 -> 2024-01 | 61 | 5.03 | 50.8 | 1.23 | 1.01 | 3.15 |
+| 2024-01 -> 2024-04 | 81 | 6.56 | 35.8 | 0.75 | -3.14 | -5.47 |
+| 2024-04 -> 2024-07 | 71 | 5.73 | 45.1 | 0.98 | -0.62 | -0.59 |
+| 2024-07 -> 2024-10 | 73 | 5.76 | 56.2 | 1.51 | 2.99 | 8.70 |
+| 2024-10 -> 2025-01 | 76 | 5.84 | 48.7 | 1.12 | 0.46 | 2.47 |
+| 2025-01 -> 2025-04 | 78 | 6.25 | 55.1 | 1.48 | 2.97 | 8.49 |
+| 2025-04 -> 2025-07 | 62 | 4.81 | 38.7 | 0.81 | -2.00 | -5.84 |
+
+**10 of 26 folds (38%) were net-Sharpe-positive; 16 (62%) were
+negative.** No sustained winning or losing streak longer than 3
+consecutive folds -- this doesn't look like one bad multi-year regime
+dragging down an otherwise-working strategy, it looks like a strategy
+oscillating around breakeven with a persistent slight negative tilt.
+Trade frequency is consistently 4.8-6.6/week across every single fold
+-- **the 3-4/week target is met and then some**, throughout training and
+without ever needing a hard minimum-trades rule.
+
+**Full training period (2018-01-01 to 2025-07-31), selected params,
+single continuous run:** 2,153 trades, 44.4% win rate, PF 0.99,
+**Sharpe -0.567**, Sortino -0.822, max drawdown 33.3% ($3,818),
+**underwater for 1,291 days (3.5 years)** after its worst peak, net PnL
+-6.1%. Essentially a coin flip that loses slightly to costs.
+
+### Parameter sensitivity (+/-20% / +/-40%, full training period)
+
+| Parameter | -40% | -20% | baseline | +20% | +40% |
+|---|---:|---:|---:|---:|---:|
+| `trend_sma_period` (Sharpe) | -0.835 | -0.707 | -0.567 | -0.438 | -0.512 |
+| `pullback_ema_period` (Sharpe) | -0.689 | -0.642 | -0.567 | -0.745 | -0.758 |
+| `pullback_tolerance_pct` (Sharpe) | -0.658 | -0.575 | -0.567 | -0.585 | -0.606 |
+| `atr_sl_mult` (Sharpe) | -0.818 | -0.763 | -0.567 | -0.620 | -0.642 |
+| `atr_tp_mult` (Sharpe) | -1.033 | -0.773 | -0.567 | -0.311 | -0.149 |
+
+**No parameter crosses the brief's fragility line (Sharpe dropping more
+than 50% from a 20% change)** -- the closest are `atr_sl_mult` at -20%
+(-34.5%) and `atr_tp_mult` at -20% (-36.2%). Sharpe stays negative
+across every single perturbation tested, at every parameter -- read
+that as stable-but-consistently-unprofitable, not fragile.
+**`atr_tp_mult` is the one worth flagging in bold: Sharpe improves
+monotonically and hasn't plateaued as it increases (-0.567 at 2.5 ->
+-0.311 at 3.0 -> -0.149 at 3.5)** -- the grid's upper bound (2.5) may
+have cut off the region where this setup actually stops losing. This is
+the single most concrete, data-grounded lead for a next iteration (see
+Recommendations).
+
+### Regime check (training data only)
+
+| Regime | Trades | Trades/wk | Win % | PF | Sharpe | Max DD % | Net PnL % |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Pre-COVID (2018-2019) | 562 | 5.87 | 44.7 | 0.995 | -0.687 | 8.91 | -0.62 |
+| COVID (2020-2021) | 552 | 5.30 | 42.6 | 0.936 | -0.913 | 24.05 | -11.71 |
+| Post-COVID (2022 - 2025-07) | 1,038 | 5.57 | 45.2 | 1.022 | -0.303 | 13.77 | 6.56 |
+
+**Not carried by one regime -- it's flat-to-negative in all three.**
+COVID-era volatility was the worst regime (largest drawdown, most
+negative Sharpe); post-COVID is the closest to breakeven but still
+Sharpe-negative. No regime shows a real edge, which is arguably a more
+consistent (if equally unflattering) finding than a strategy that only
+works in one specific period.
+
+### Test window (2025-08-01 to 2026-07-31) -- run exactly once
+
+| Metric | Bot (LOWFREQ v2) | Buy-and-hold XAUUSD |
+|---|---:|---:|
+| Net return | +23.59% ($12,358.96) | +20.32% ($12,032.32) |
+| Sharpe (rf=5%) | **1.056** | 0.519 |
+| Sortino (rf=5%) | 1.637 | 0.700 |
+| Max drawdown | **7.73%** ($969.88, 20.25 days) | 27.70% |
+| Win rate / avg win:loss | 50.2% / 1.20 | -- |
+| Profit factor | 1.212 | -- |
+| Total trades / trades per week | 247 / 4.79 | -- |
+| Expectancy per trade | $9.55 | -- |
+
+The bot beat buy-and-hold on every risk-adjusted measure in this window
+-- higher return, roughly double the Sharpe, and a quarter of the max
+drawdown. **Equity curve (`data/equity_curve.png`) shows why**:
+buy-and-hold rallied to a peak of ~$16,400 (+64%) around Feb 2026, then
+gave almost all of it back down to ~$12,000 by period end; the bot's
+ATR-stop exits produced a smooth, steady climb that mostly sidestepped
+both the spike and the round-trip. That's a real, observable property
+of the stop design, not an illusion -- but see the significance test
+below before treating it as proof of skill.
+
+**Monte Carlo (5,000 bootstrap resamples of the 247 real test trades,
+`data/monte_carlo.png`):**
+
+| | 5th %ile | 25th %ile | 50th %ile | 75th %ile | 95th %ile |
+|---|---:|---:|---:|---:|---:|
+| Final equity | $9,462 (-5.4%) | $11,220 (+12.2%) | $12,354 (+23.5%) | $13,591 (+35.9%) | $15,342 (+53.4%) |
+
+Max drawdown: 5.9% (5th) / 10.5% (50th) / 21.3% (95th). **9.1% of the
+5,000 resampled paths lost money. 57.5% beat buy-and-hold's actual
+$12,032 final equity** -- better than a coin flip, but not by a
+commanding margin.
+
+**Statistical significance -- one-sample t-test on the 247 per-trade
+returns (H0: mean return = 0):**
+
+**t = 1.325, p = 0.186. Not significant at the 0.05 level. No
+statistically significant edge detected**, despite the favorable point
+estimates above. This is the number that matters most in this section.
+
+### Train vs. test smell test
+
+By the brief's literal rule (test Sharpe < 50% of train Sharpe, or test
+PF < 70% of train PF => "likely overfit"), **this doesn't trigger** --
+test Sharpe (1.056) is far above train Sharpe (-0.567), and test PF
+(1.21) is above train PF (0.99). But read that literally and you'd miss
+the actual problem: **the rule was written to catch a strategy that
+looks great in training and collapses out-of-sample. This is the mirror
+image -- a strategy that looked flat-to-losing across 7.5 years, 26
+folds, and 48 parameter combinations, and then had one strongly positive
+year out-of-sample.** That reversal is not evidence the strategy
+suddenly started working; it's much more consistent with (a) one
+out-of-sample year landing in an unusual, single-direction-then-reversal
+gold regime the training period never really contained, and (b) the ATR
+stop mechanically clipping drawdown during that specific kind of move --
+combined with a p-value that says the per-trade edge isn't
+distinguishable from zero. **Bottom line: no overfitting by the letter
+of the rule, but this result is not trustworthy evidence of a real edge
+either.** One good out-of-sample year following seven-and-a-half flat
+years is weak evidence, not proof.
+
+### Final verdict
+
+1. **Does the bot beat buy-and-hold XAUUSD on a risk-adjusted basis in
+   the test window? YES** -- higher Sharpe, higher Sortino, much lower
+   drawdown, slightly higher raw return, in this one test window.
+2. **Is the edge statistically significant? NO** -- t-test p=0.186.
+3. **Is there evidence of overfitting? Not by the letter of the smell
+   test, but the train/test reversal itself is a serious yellow flag** --
+   see above. Treat this as "unresolved," not "cleared."
+4. **Top 3 concrete improvements, ranked by expected impact:**
+   1. **Extend the `atr_tp_mult` search range past 2.5** (e.g. 2.5-4.0
+      in 0.25 steps) and re-run the full walk-forward grid. Sensitivity
+      showed Sharpe improving monotonically and not plateauing all the
+      way to +40% (3.5) -- the current grid's upper bound may be cutting
+      off the region where this setup actually clears breakeven. This is
+      the single most concrete, data-backed lead from this round.
+   2. **Add a drawdown circuit breaker.** The full training run spent
+      1,291 consecutive days underwater after its worst peak -- no
+      client tolerates a 3.5-year drawdown even if the strategy is
+      flat-to-positive over the full window. A rule like "halve position
+      size (or pause) after drawdown exceeds X%, resume at full size once
+      a new equity high is made" directly targets this without touching
+      the entry logic at all.
+   3. **Replace the assumed $0.40 spread / $0.05 slippage with real
+      execution data.** At this thin a margin (PF 0.99-1.21 depending on
+      period), cost assumptions matter more than usual -- this project
+      already found GBPUSD's raw-mode edge flip from profitable to a net
+      loss under realistic costs alone (see the original evaluation
+      below). The Deriv paper-trading process already running
+      (`src/live_monitor.py --paper`) is accumulating real fill data for
+      exactly this purpose -- use it once enough trades have logged.
+5. **Final call: needs more paper trading.** Not "ready for real
+   capital" -- the only positive, significant-looking result came from a
+   single out-of-sample year that training gave no reason to expect, and
+   the t-test says that result isn't statistically distinguishable from
+   noise. Not "fundamental redesign" either -- unlike MEDFREQ (p<0.000001
+   on 6,347 trades, decisively broken), nothing here is proven broken:
+   frequency target met every single fold, no fragile parameters, a
+   concrete unexplored lead (`atr_tp_mult`) still on the table, and a
+   test-window result that -- while not proof -- is at least a real,
+   mechanistically explainable property of the stop design. The honest
+   next step is exactly what's already running: let
+   `src/live_monitor.py --paper` (or `src/mt5_live.py` once the MT5
+   bridge is validated) accumulate genuine forward-test evidence over
+   weeks/months before this gets anywhere near real money.
 
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 

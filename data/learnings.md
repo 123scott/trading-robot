@@ -275,3 +275,43 @@ Plain-English warnings distilled from realized losses.
 - WARNING: XAUUSD_OPT death-cross near 1899.22-1937.58 produced a loss of -4.26 on 2023-09-08T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD_OPT death-cross near 1998.02-2038.38 produced a loss of -175.15 on 2024-02-12T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
 - WARNING: XAUUSD_OPT death-cross near 2566.28-2618.12 produced a loss of -359.78 on 2024-12-19T00:00:00+00:00. Treat similar crossover setups in this zone with caution.
+
+## Retraining round notes (XAUUSD_LOWFREQ v2, walk-forward retrain)
+
+Not machine-parsed WARNING lines (these came from pure walk-forward
+simulation, never logged to `data/ledger.csv`) -- plain-English lessons
+for whoever runs the next round. Full detail in `data/performance_report.md`.
+
+- **A pullback-to-EMA entry, at any of 48 tested parameter combinations,
+  showed no positive median walk-forward Sharpe across 26 folds spanning
+  2018-2025.** The best combo still scored -0.466. Don't assume adding an
+  intraday entry layer automatically creates edge just because it hits
+  the trade-frequency target -- this one hit 5-6.5 trades/week in every
+  single fold and was still flat-to-losing overall.
+- **Take-profit width was the single most influential lever found.**
+  Sensitivity analysis showed Sharpe improving monotonically from -0.567
+  (2.5x ATR) to -0.149 (3.5x ATR) without plateauing -- the search
+  range's upper bound was very likely cutting off a region worth
+  exploring. Next round: extend `atr_tp_mult` past 2.5, don't just accept
+  the grid's boundary as the ceiling.
+- **A strategy can be flat-to-negative across 7.5 years of training and
+  still produce a strongly positive, seemingly significant-looking single
+  out-of-sample year.** This happened here: full training Sharpe -0.567,
+  test-window Sharpe +1.056 -- and the t-test on the test trades still
+  came back non-significant (p=0.186). One good year does not overturn
+  seven-and-a-half flat ones. Don't let a good-looking test window alone
+  justify moving to real capital -- check whether training ever supported
+  the result in the first place.
+- **A 3.5-year underwater period (1,291 days) showed up in the full
+  training run despite the strategy finishing only slightly negative
+  overall.** Net-flat-to-slightly-negative headline numbers can hide a
+  drawdown duration no real account would sit through. Check max
+  drawdown *duration*, not just depth, before calling anything
+  deployable.
+- **XAUUSD_LOWFREQ (the exact ledger tag `src/bot.py` writes to) has
+  never actually been run under its own tag** -- all prior XAUUSD
+  crossover history in `data/ledger.csv` is under `XAUUSD`/`XAUUSD_BASE`/
+  `XAUUSD_OPT` instead, which the memory system's exact-symbol match
+  doesn't share with `XAUUSD_LOWFREQ`. Worth fixing before treating the
+  memory system as "warmed up" for the profile that's actually documented
+  as the client-facing bot.
