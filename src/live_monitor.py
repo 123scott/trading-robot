@@ -278,7 +278,11 @@ async def _run_yfinance_polling_mode(symbol: str, notional: float, seed_candles:
 
     while True:
         recent_start = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
-        latest = market_data.fetch_candles(symbol, interval="1d", start=recent_start)
+        try:
+            latest = market_data.fetch_candles(symbol, interval="1d", start=recent_start)
+        except Exception as e:
+            log(f"[PAPER MODE] Poll failed ({type(e).__name__}: {e}), will retry next poll.")
+            latest = []
         if latest and latest[-1].open_time > last_seen_open_time:
             new_candle = latest[-1]
             history.append(new_candle)
