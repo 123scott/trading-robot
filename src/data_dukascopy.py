@@ -58,13 +58,29 @@ import requests
 from src.candle import Candle
 
 DUKASCOPY_URL = "https://datafeed.dukascopy.com/datafeed/{symbol}/{year:04d}/{month:02d}/{day:02d}/{hour:02d}h_ticks.bi5"
-POINT_VALUE = {"XAUUSD": 1000.0}
+# XAUUSD's point_value (1000) was verified against known real gold prices and cross-validated
+# against real Yahoo H1 data (see module docstring). EURUSD/GBPUSD's 100000 is Dukascopy's
+# standard 5-decimal-pip convention for FX majors -- ALSO empirically verified here (not assumed):
+# fetch_and_cache_range()'s first real EURUSD/GBPUSD batch was sanity-checked against known real
+# price levels for those pairs before being trusted (see data/asset_shift_data_check.md if present).
+POINT_VALUE = {"XAUUSD": 1000.0, "EURUSD": 100000.0, "GBPUSD": 100000.0}
 
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-M5_CACHE_PATH = os.path.join(CACHE_DIR, "dukascopy_m5_cache.csv")
-HOURS_DONE_PATH = os.path.join(CACHE_DIR, "dukascopy_hours_done.csv")
 M5_HEADER = ["bar_start_utc", "open", "high", "low", "close", "tick_count"]
 HOURS_HEADER = ["hour_start_utc", "tick_count"]
+
+
+def _m5_cache_path(symbol: str) -> str:
+    # XAUUSD keeps its original, un-suffixed filename -- ~41MB of real, already-fetched data
+    # that must never be touched/renamed. Other symbols get their own suffixed cache file so
+    # nothing overwrites or mixes with it.
+    suffix = "" if symbol == "XAUUSD" else f"_{symbol}"
+    return os.path.join(CACHE_DIR, f"dukascopy_m5_cache{suffix}.csv")
+
+
+def _hours_done_path(symbol: str) -> str:
+    suffix = "" if symbol == "XAUUSD" else f"_{symbol}"
+    return os.path.join(CACHE_DIR, f"dukascopy_hours_done{suffix}.csv")
 
 
 class RateLimited(Exception):
@@ -117,36 +133,38 @@ def _bucket_ticks_to_m5(hour_dt: datetime, ticks: List[tuple], point: float) -> 
     return rows
 
 
-def _ensure_cache() -> None:
+def _ensure_cache(symbol: str) -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
-    if not os.path.exists(M5_CACHE_PATH):
-        with open(M5_CACHE_PATH, "w", newline="", encoding="utf-8") as f:
+    m5_path, hours_path = _m5_cache_path(symbol), _hours_done_path(symbol)
+    if not os.path.exists(m5_path):
+        with open(m5_path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(M5_HEADER)
-    if not os.path.exists(HOURS_DONE_PATH):
-        with open(HOURS_DONE_PATH, "w", newline="", encoding="utf-8") as f:
+    if not os.path.exists(hours_path):
+        with open(hours_path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow(HOURS_HEADER)
 
 
-def _done_hours() -> set:
-    _ensure_cache()
-    with open(HOURS_DONE_PATH, newline="", encoding="utf-8") as f:
+def _done_hours(symbol: str) -> set:
+    _ensure_cache(symbol)
+    with open(_hours_done_path(symbol), newline="", encoding="utf-8") as f:
         return {row["hour_start_utc"] for row in csv.DictReader(f)}
 
 
-def clear_error_hours() -> int:
+def clear_error_hours(symbol: str = "XAUUSD") -> int:
     """
     Removes ERROR-marked rows from the 'hours done' tracker so a subsequent
     fetch_and_cache_range() call retries exactly those hours (rate-limit
     exhaustion is recoverable; genuinely-empty hours are marked "0", not
     "ERROR", and are left alone). Returns how many were cleared.
     """
-    _ensure_cache()
-    with open(HOURS_DONE_PATH, newline="", encoding="utf-8") as f:
+    _ensure_cache(symbol)
+    hours_path = _hours_done_path(symbol)
+    with open(hours_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     kept = [r for r in rows if r["tick_count"] != "ERROR"]
     cleared = len(rows) - len(kept)
     if cleared:
-        with open(HOURS_DONE_PATH, "w", newline="", encoding="utf-8") as f:
+        with open(hours_path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=HOURS_HEADER)
             w.writeheader()
             w.writerows(kept)
@@ -177,8 +195,9 @@ def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
     start_dt = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else datetime.now(timezone.utc)
 
-    _ensure_cache()
-    already = _done_hours()
+    _ensure_cache(symbol)
+    m5_path, hours_path = _m5_cache_path(symbol), _hours_done_path(symbol)
+    already = _done_hours(symbol)
     todo = [h for h in _hour_range(start_dt, end_dt) if h.isoformat() not in already]
     log(f"{len(already)} hours already done. {len(todo)} hours to fetch for {symbol} "
         f"({start_dt.date()} -> {end_dt.date()})...")
@@ -191,11 +210,11 @@ def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
     def _flush():
         nonlocal hours_buffer, m5_buffer
         if hours_buffer:
-            with open(HOURS_DONE_PATH, "a", newline="", encoding="utf-8") as f:
+            with open(hours_path, "a", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerows(hours_buffer)
             hours_buffer = []
         if m5_buffer:
-            with open(M5_CACHE_PATH, "a", newline="", encoding="utf-8") as f:
+            with open(m5_path, "a", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerows(m5_buffer)
             m5_buffer = []
 
@@ -236,14 +255,14 @@ def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
             "total_requested": len(todo)}
 
 
-def load_m5_candles(start: str, end: Optional[str] = None) -> List[Candle]:
+def load_m5_candles(start: str, end: Optional[str] = None, symbol: str = "XAUUSD") -> List[Candle]:
     """Reads real M5 candles back out of the cache (gaps for closed-market periods, never zero-filled)."""
-    _ensure_cache()
+    _ensure_cache(symbol)
     start_dt = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
     end_dt = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) if end else datetime.now(timezone.utc)
 
     candles = []
-    with open(M5_CACHE_PATH, newline="", encoding="utf-8") as f:
+    with open(_m5_cache_path(symbol), newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             ts = datetime.fromisoformat(row["bar_start_utc"])
             if ts < start_dt or ts >= end_dt:
