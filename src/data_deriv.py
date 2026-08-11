@@ -119,6 +119,10 @@ async def fetch_deriv_candles_async(symbol: str = "XAUUSD_DERIV", interval: str 
     return _rows_to_candles(rows)
 
 
+class DerivApiError(RuntimeError):
+    """Raised when Deriv's API responds to a request with an {"error": ...} payload."""
+
+
 async def stream_deriv_ticks(ticker: str, on_tick: Callable[[dict], None],
                               stop_event: Optional[asyncio.Event] = None) -> None:
     """
@@ -129,11 +133,31 @@ async def stream_deriv_ticks(ticker: str, on_tick: Callable[[dict], None],
     Runs until `stop_event` is set (or the connection drops). Used by the
     --paper forward-testing mode; this function only reads the live feed,
     it never places orders.
+
+    Raises DerivApiError immediately if Deriv rejects the subscription
+    (e.g. InvalidSymbol, or the app_id losing streaming authorization --
+    a real failure mode observed in production: the previous version of
+    this function only checked for msg_type=="tick", so an {"error":...}
+    response with msg_type=="tick" and no "tick" key was silently
+    ignored -- the loop just sat there forever waiting for a tick that
+    would never come, and the caller's only symptom was the connection
+    eventually timing out and reconnecting into the exact same silent
+    failure, forever. Surface it instead so the caller (and its
+    reconnect-with-backoff logic) can actually see what's wrong.
     """
     async with websockets.connect(DERIV_WS_URL, ssl=_SSL_CTX, open_timeout=15) as ws:
         await ws.send(json.dumps({"ticks": ticker, "subscribe": 1}))
+        first = json.loads(await ws.recv())
+        if "error" in first:
+            raise DerivApiError(f"Deriv rejected tick subscription for {ticker!r}: "
+                                 f"{first['error'].get('code')}: {first['error'].get('message')}")
+        if first.get("msg_type") == "tick" and "tick" in first:
+            on_tick(first["tick"])
         while stop_event is None or not stop_event.is_set():
             raw = await ws.recv()
             msg = json.loads(raw)
+            if "error" in msg:
+                raise DerivApiError(f"Deriv sent an error mid-stream for {ticker!r}: "
+                                     f"{msg['error'].get('code')}: {msg['error'].get('message')}")
             if msg.get("msg_type") == "tick" and "tick" in msg:
                 on_tick(msg["tick"])
