@@ -108,3 +108,45 @@ which the memory system (exact-symbol match) does NOT share with
 purpose-tagged ledger symbols of its own (see performance_report.md),
 so this doesn't block anything -- just flagging it as a pre-existing
 gap between the documented profile name and what's actually been run.
+
+## After picture (post-retrain, two rounds complete)
+
+### Round 1: built `src/entries_v2.py`
+
+Daily SMA(50) regime filter (long above / short below -- SHORT is new,
+v1 was long-only-or-flat) + one H1 pullback-to-EMA(21)-and-bounce entry
++ ATR(14)-based SL(2.0x)/TP(2.5x), fixed at entry (v1 had no stop-loss
+at all). Walk-forward grid search (48 combos x 26 folds, training only):
+**every combo scored a negative median Sharpe**, best -0.466. Trade
+frequency target met and exceeded in every single fold (4.8-6.6/week vs.
+3-4 target). Sensitivity/regime checks: no fragile parameter, no single
+regime carrying it. The one-time test-window run (2025-08 to 2026-07)
+came back strongly positive (Sharpe 1.06, PF 1.21) but not statistically
+significant (t-test p=0.186).
+
+### Round 2: tested the one lead, then killed the design
+
+Extended `atr_tp_mult` to 6.0 across the full 26-fold walk-forward (not
+just a single continuous run, which round 1's sensitivity check used) --
+**does not cross positive, plateaus at breakeven noise** (best: +0.001
+median Sharpe at tp=5.0, 13/26 folds positive -- exactly half). Autopsy
+of the test-window's 247 trades: removing the top 3 winners (1.2% of
+trades) cuts Sharpe by 58%; two months (Feb + Apr 2026) account for
+65.1% of the year's entire net profit. **Both halves of the standing
+decision rule were met -> recommending killing further iteration on
+this pullback-to-EMA mechanism.** What to test instead: a volatility/
+trend-strength entry gate (ADX or ATR-expansion threshold) -- the one
+lever neither this design nor MEDFREQ has ever tried, and both share the
+same failure shape (no way to detect "market is choppy, stand aside").
+
+### What's different from the before-picture, concretely
+
+| | Before (v1) | After (v2, round 2) |
+|---|---|---|
+| Timeframe | Daily only | Daily regime filter + H1 execution |
+| Position types | Long or flat | Long, short, or flat |
+| Stop-loss / take-profit | None (exit on opposite crossover) | ATR-based, fixed at entry |
+| Trades/week | ~0.13 (measured from ledger.csv) | 4.8-6.6 in every walk-forward fold |
+| Training-period edge | Not evaluated with this rigor before | Negative across 48/48 grid combos, extended search still finds none |
+| Forward-test evidence | `src/live_monitor.py --paper` (v1, running) | `src/entries_v2_paper.py` (v2, running, separate log file) |
+| Status | Unproven, was never the subject of a kill decision | Recommended for retirement as designed; forward-test kept running as a hedge against being wrong |

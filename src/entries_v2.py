@@ -88,6 +88,8 @@ class TradeRecordV2:
     direction: Direction
     entry_time: datetime
     entry_price: float
+    stop: float   # SL price level set at entry (fixed for the life of the trade)
+    target: float  # TP price level set at entry (fixed for the life of the trade)
     exit_time: datetime
     exit_price: float
     exit_reason: str  # "SL" | "TP"
@@ -159,8 +161,8 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
                 pnl = gross - costs.commission * qty * 2  # commission is 0.0 per the brief; kept for completeness
                 trades.append(TradeRecordV2(
                     direction=position["direction"], entry_time=position["entry_time"],
-                    entry_price=position["entry_price"], exit_time=t, exit_price=fill,
-                    exit_reason=exit_reason, qty=qty, pnl=pnl,
+                    entry_price=position["entry_price"], stop=position["sl"], target=position["tp"],
+                    exit_time=t, exit_price=fill, exit_reason=exit_reason, qty=qty, pnl=pnl,
                 ))
                 position = None
 

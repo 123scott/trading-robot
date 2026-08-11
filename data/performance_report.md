@@ -294,6 +294,149 @@ years is weak evidence, not proof.
    bridge is validated) accumulate genuine forward-test evidence over
    weeks/months before this gets anywhere near real money.
 
+### Round 2: TP Extension, Outlier Autopsy, and the Kill Decision
+
+**Verdict up front: killing further tuning of this entry design.** The
+lead from round 1 (extend `atr_tp_mult`) didn't pan out, and a direct
+autopsy of the one good test-window result shows it was carried by a
+handful of outlier trades and two lucky months, not a repeatable edge.
+Paper trading stays running regardless -- see below -- but no more grid
+searches on this specific pullback-to-EMA mechanism are planned.
+
+#### Task 1: extending `atr_tp_mult` past 2.5, full 26-fold walk-forward (training only)
+
+Round 1's sensitivity check only varied one param at a time on a single
+continuous training run, not the full walk-forward -- this task redid it
+properly: full 26-fold walk-forward, `atr_tp_mult` in
+{1.5, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0}, other four params held at their
+round-1 selected values.
+
+| `atr_tp_mult` | Median Sharpe | Total trades | Folds positive |
+|---:|---:|---:|---:|
+| 1.5 | -0.876 | 2,687 | 8/26 |
+| 2.5 | -0.466 | 1,850 | 11/26 |
+| 3.0 | -0.371 | 1,594 | 12/26 |
+| 3.5 | -0.300 | 1,426 | 12/26 |
+| 4.0 | -0.247 | 1,288 | 11/26 |
+| 4.5 | -0.452 | 1,149 | 12/26 |
+| **5.0** | **+0.001** | 1,061 | 13/26 |
+| 6.0 | -0.169 | 922 | 12/26 |
+
+**This does not cross into a real positive edge -- it plateaus at
+breakeven noise and says so plainly.** The best point (tp=5.0) is
++0.001 median Sharpe: statistically indistinguishable from zero, and
+even there only exactly half the folds (13/26) are Sharpe-positive.
+The trend from 1.5->4.0 isn't even monotonic once tested properly across
+all 26 folds (it wobbles: 4.0 at -0.247, 4.5 drops back to -0.452, 5.0
+recovers to +0.001, 6.0 drops to -0.169) -- round 1's single-continuous-
+run sensitivity check made this look like a clean, still-climbing trend
+toward something real; the full walk-forward shows it was noise around
+a flat asymptote, not genuine improvement. Widening the take-profit also
+mechanically just reduces trade count (2,687 -> 922 from tp=1.5 to
+tp=6.0) -- part of the apparent "improvement" is simply trading less,
+not trading better.
+
+#### Task 2: trade distribution autopsy on the test-window run (no new backtest -- same 247 trades, reanalyzed)
+
+| | Value |
+|---|---:|
+| Total trades / win rate | 247 / 50.2% |
+| Avg win / avg loss | $108.85 / -$90.56 |
+| Baseline Sharpe (all 247 trades) | 1.056 |
+| Sharpe with biggest winner removed (246 trades) | **0.762** (-29.4%) |
+| Sharpe with top 3 winners removed (244 trades) | **0.442** (-58.1%) |
+| Net PnL with top 3 winners removed | +12.11% (vs. +23.59% original) |
+
+Biggest winner: +$593.57 (2026-02-04, long, TP) -- a single trade
+(0.4% of the sample) accounts for nearly 30% of the entire year's
+Sharpe. The top 3 winners (1.2% of trades) account for more than half
+of it.
+
+**Monthly P&L breakdown:**
+
+| Month | Trades | Net P&L | % of total |
+|---|---:|---:|---:|
+| 2025-08 | 25 | -110.16 | -4.7% |
+| 2025-09 | 26 | +414.53 | +17.6% |
+| 2025-10 | 20 | +559.16 | +23.7% |
+| 2025-11 | 20 | +260.96 | +11.1% |
+| 2025-12 | 23 | -106.23 | -4.5% |
+| 2026-01 | 21 | +479.07 | +20.3% |
+| **2026-02** | 14 | **+944.00** | **+40.0%** |
+| 2026-03 | 16 | -721.80 | -30.6% |
+| **2026-04** | 12 | **+592.60** | **+25.1%** |
+| 2026-05 | 23 | -476.94 | -20.2% |
+| 2026-06 | 21 | +351.42 | +14.9% |
+| 2026-07 | 26 | +172.33 | +7.3% |
+
+**Two months (Feb 2026 + Apr 2026) account for 65.1% of the entire
+year's net profit.** Two other months (Mar, May) were sharply negative,
+nearly offsetting a large share of what the good months made. This is
+lumpy, concentrated performance, not a smooth monthly grind -- exactly
+the pattern you'd expect if a handful of well-timed trades, not a
+repeatable process, drove the headline number.
+
+**Both halves of the standing decision rule are now met:** Task 1
+plateaus at breakeven noise (no edge found even after extending the
+search), and Task 2 shows the one positive result was outlier- and
+month-concentration-driven (losing >50% of its Sharpe to 3 trades out of
+247). Per the decision rule: **recommend killing further iteration on
+this pullback-to-EMA design.**
+
+#### What to test instead
+
+Both intraday designs tried in this project so far -- MEDFREQ's M5
+EMA-crossover chase and this round's H1 pullback-to-EMA -- share a gap
+neither has ever tested: **nothing in either design distinguishes a
+trending market from a choppy one before entering.** MEDFREQ's
+diagnosed failure mode was repeated whipsaw entries during chop;
+entries_v2's training-period result was flat-to-negative in every
+regime tested, consistent with the same problem in a less catastrophic
+form. The single most concrete, still-untried lever: **add a
+volatility/trend-strength gate (e.g. ADX(14) > 20-25, or H1 ATR
+expanding relative to its own 20-bar average) that must be true before
+either setup is allowed to enter at all** -- explicitly filtering out
+the ranging conditions where a pullback-and-bounce or a moving-average
+cross is closest to pure noise. If that gate is tested properly
+(walk-forward, training-only, same rigor as this round) and still finds
+nothing, the more defensible conclusion becomes: simple technical-
+pattern intraday entries don't have a demonstrated edge on XAUUSD at
+this frequency, and effort is better spent hardening v1's daily approach
+(it has never had a real stop-loss -- see the original snapshot) than
+continuing to chase trade frequency.
+
+#### Task 3: live paper-trading harness (running now)
+
+`src/entries_v2_paper.py` -- re-runs `entries_v2.simulate()` (the exact
+same function the backtest uses, not a hand-written parallel
+implementation) against real, live-polled Deriv (`XAUUSD_DERIV`) H1/daily
+candles every 30 minutes, and appends any newly-closed trade to
+`data/entries_v2_paper_trades.csv` (timestamp, pair, direction, entry,
+stop, target, exit, exit reason, P&L, running trade count/win rate/PF/
+net PnL%). Deliberately a **separate file** from `data/paper_trades.csv`
+-- that one has a different schema (no stop/target columns) and is
+actively written by the already-running v1 crossover paper-trading
+process; sharing it would corrupt both. Uses the round-1 selected
+params (`atr_tp_mult=2.5`, the one that went through the full
+sensitivity/regime pipeline), not the tp=5.0 breakeven-noise point from
+Task 1 above.
+
+`src/entries_v2_paper_stats.py` prints current live stats next to both
+backtest reference points (the honest training baseline and the
+not-significant test-window result), specifically so it's obvious if
+live results are echoing the lucky-looking test year or the more
+representative training expectation.
+
+**Currently running in the background** (started this round, polling
+Deriv every 30 minutes) -- first poll logged 21 trades from its H1
+lookback seed window (2026-07-13 to 2026-08-10, real Deriv prices):
+n=21, win rate 42.9%, PF 0.92, net PnL -0.71%. Early and small-sample,
+but notably tracking closer to the training baseline (Sharpe -0.57, PF
+0.99) than the test-window result (Sharpe 1.06, PF 1.21) right out of
+the gate -- consistent with, though nowhere near proof of, this
+round's conclusion that the test-window result doesn't reflect the
+strategy's real behavior.
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with
