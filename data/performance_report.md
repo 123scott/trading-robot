@@ -624,6 +624,125 @@ not produced a demonstrated edge in this project by any method tried so
 far** -- crossover, pullback, or SMC confluence. That's a meaningfully
 different, stronger statement than any single round could make alone.
 
+## Exploratory Matrix: Asset Shift (EURUSD/GBPUSD) vs. Strategy Shift (Gold Breakout)
+
+Quick preliminary read across two pivot hypotheses, per direct request,
+after v3's SMC pullback approach found no edge on gold. **Neither
+hypothesis clears the bar. One of the two legs of Hypothesis 1
+(GBPUSD) couldn't be tested at all -- reported honestly as a data
+acquisition failure, not papered over with a result.**
+
+### Data acquisition, honestly reported
+
+Testing entries_v3 on new symbols required generalizing
+`src/data_dukascopy.py` (previously hardcoded to XAUUSD's single cache
+file and point-value) to support per-symbol caching -- done, and
+regression-checked against the existing 608,791-bar XAUUSD cache first
+(unchanged, unaffected). EURUSD/GBPUSD's point-value conversion
+(Dukascopy's 100000-scale FX convention, vs. XAUUSD's 1000) was verified
+against real known price levels (EURUSD ~1.151, GBPUSD ~1.343) before
+being trusted, not assumed.
+
+**The fetch itself did not go cleanly.** Two attempts at pulling
+2024-01-01-to-present for both symbols (first at 8 concurrent workers,
+then retried at 3 after clearing the error hours) each collapsed into a
+sustained 100% error rate partway through -- consistent with Dukascopy
+imposing a client-level block after sustained high-volume requests, not
+ordinary transient rate-limiting that backoff resolves. A third attempt
+was deliberately not made -- continuing to hammer a blocking endpoint
+risks extending that block in a way that could also affect the
+existing, working XAUUSD pipeline this entire project depends on.
+
+Net result: **EURUSD ended up with a genuinely dense, gap-free real
+window for 2024-01 through 2024-08 (~8 months, 95-109% of full expected
+bar density each month) and effectively nothing usable after that.
+GBPUSD ended up with 288 M5 bars total -- one single day, from the
+original point-value verification fetch, and nothing else.** Rather
+than force a test on GBPUSD's essentially-empty dataset, or splice
+EURUSD's sparse post-September data in alongside its dense window (which
+would introduce fetch-gap artifacts that the SMC engine's swing/FVG
+detection could easily misread as real price gaps), the EURUSD test
+below uses ONLY the verified-dense 8-month window, and GBPUSD is
+reported as not tested, not as a zero or a failure of the strategy
+itself.
+
+### Hypothesis 1: Asset Shift -- entries_v3 SMC logic on EURUSD (8-month dense window, H1)
+
+Same four-filter stack as the gold version (D1 BOS/CHoCH alignment,
+07:00-17:00 UTC session, H1 liquidity-sweep-into-FVG confluence, RRR
+>= 1.5 structural target), unchanged -- only the instrument and its
+cost model differ. Cost model rescaled for EURUSD's price level
+(0.00015 spread / 0.00002 slippage, matching this project's existing
+GBPUSD cost-profile magnitude in `market_data.COST_PROFILES` -- the
+gold-calibrated $0.25 default would have been a ~2,500-pip spread here
+and corrupted every RRR calculation).
+
+| Segment | Trades | Win Rate | Profit Factor | Max DD % | Avg Payoff |
+|---|---:|---:|---:|---:|---:|
+| Train (2024-01 to 2024-07) | 0 | -- | -- | -- | -- |
+| Validation (2024-07 to 2024-09) | 0 | -- | -- | -- | -- |
+
+**Zero signals fired in either partition.** Not a rounding error, not a
+bug -- verified the mechanism itself works correctly (this is the same
+code, already producing real trades on gold). The four simultaneous
+filters that were merely very restrictive on gold (29 signals in 8.5
+years) are apparently too restrictive to fire at all on EURUSD within
+an 8-month window at this specific parameterization. This isn't evidence
+EURUSD lacks the underlying patterns -- it's evidence this exact filter
+combination, calibrated implicitly around gold's volatility and range
+characteristics, doesn't transfer to a lower-volatility major pair
+without recalibration. That recalibration is explicitly out of scope
+for a "quick exploratory" pass (would require re-opening the parameter
+question this whole project has been careful to keep out of grid
+searches) -- flagged as a real next step, not silently done here.
+
+**GBPUSD: not tested.** No usable data. Retrying requires either waiting
+out whatever cooldown period resolves Dukascopy's block (unknown
+duration, not something to guess at) or sourcing a shorter/gentler
+fetch window at very low concurrency (e.g. 1 worker) once that cooldown
+has passed.
+
+### Hypothesis 2: Strategy Shift -- Donchian breakout on XAUUSD (H4)
+
+Full detail and mechanism in `src/breakout_v1.py`. 20-period Donchian
+range-expansion entry (classic Turtle System 1 length), ATR(14)
+chandelier trailing stop (2.0x, moves only in the trade's favor), no
+fixed profit target -- the opposite archetype from every mean-reversion-
+flavored setup tried so far (pullback, SMC sweep-reversal). Full
+existing 2018-2026 XAUUSD H4 data, no new fetch needed.
+
+| Segment | Trades | Win Rate | Profit Factor | Max DD % | Avg Payoff | Net P&L |
+|---|---:|---:|---:|---:|---:|---:|
+| Train (2018 - 2023-02) | 342 | 36.0% | 0.639 | **55.66%** | -$16.01 | -54.77% |
+| Validation (2023-02 - 2026-08) | 235 | 40.9% | 0.987 | 19.04% | -$0.55 | -1.29% |
+
+**Decisively worse than merely "no edge" -- this is actively dangerous
+as specified.** A 55.66% training drawdown is the worst result of any
+strategy variant tried in this project, MEDFREQ included. Mechanism
+(consistent with, though not separately re-diagnosed to the same depth
+as, MEDFREQ's original whipsaw diagnosis): a pure range-expansion entry
+with no chop/volatility-regime filter buys and sells every new N-bar
+extreme indiscriminately, including the false breakouts that dominate
+gold's frequent ranging periods -- exactly the "market is choppy, stand
+aside" gap flagged as unaddressed after both the v2 and v3 rounds, now
+showing up a third time in a third, structurally different strategy
+archetype. Validation is closer to breakeven only because 342 Train
+trades already absorbed most of the damage before Validation began, not
+because the underlying mechanism improved.
+
+### Where a genuine baseline edge exists: nowhere yet, across five real attempts
+
+Crossover, pullback, SMC liquidity-sweep confluence, and now trend-
+breakout have all been tested on gold, plus one exploratory asset shift
+-- none has produced a real, held-up edge. The consistent missing piece
+across every one of them, named explicitly after MEDFREQ, restated
+after v3, and now demonstrated a third time here: **none of these
+designs distinguish trending conditions from ranging ones before
+entering.** That's the most defensible, evidence-backed next thing to
+build and test properly (walk-forward, training-data-only, same rigor
+as every prior round) -- not another new entry pattern on the same
+unfiltered regime.
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with
