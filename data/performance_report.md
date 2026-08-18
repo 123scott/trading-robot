@@ -823,6 +823,101 @@ this strategy were ever deployed, the drawdown reduction alone would be
 worth keeping. It is not, on its own, the fix that reverses three
 rounds of "no genuine edge" findings.
 
+### Full Evaluation: Monte Carlo, Equity Curve Fit, Sharpe/Sortino (regime-filtered v2, training data)
+
+Per explicit request for the full evaluation treatment. **Run entirely
+on the training period (2018-01-01 to 2025-07-31), by deliberate
+choice** -- the reserved test window (2025-08 to 2026-07) was already
+used once for the unfiltered v2 baseline, and touching it again for
+this variant would erode its integrity as a genuine out-of-sample check
+for a closely-related model. 1,421 real trades, same selected params as
+every prior v2 round, regime filter on.
+
+**Metrics table:**
+
+| Metric | Value |
+|---|---:|
+| Total trades | 1,421 |
+| Win rate | 44.55% (633W / 788L) |
+| Avg win / avg loss | $67.06 / -$53.82 (ratio 1.246) |
+| Profit Factor | **1.001** |
+| Expectancy per trade | **$0.03** |
+| Sharpe (rf=5%) | -0.555 |
+| Sortino (rf=5%) | -0.799 |
+| Max Drawdown | 23.80% ($2,698.59) |
+| Max Drawdown duration | 562 days (~1.5 years) |
+| Net P&L | +$43.02 (+0.43%) |
+| Trades/week | 3.67 |
+
+**Read the win rate and payoff ratio together -- this is the whole
+story in two numbers.** Breakeven win rate at a 1.246 payoff ratio is
+1/(1+1.246) = 44.5%. Actual win rate: 44.55%. **This strategy is
+sitting almost exactly on its own breakeven line** -- which is exactly
+why profit factor is 1.001 and expectancy is three cents a trade. This
+isn't a strategy that's slightly losing or slightly winning; it's a
+coin flip with costs already netted in, landing almost exactly at zero.
+
+**Equity curve fit** (`data/regime_filter_equity_curve.png`): linear
+regression on the trade-indexed equity curve gives **slope
+-$0.0137/trade, R² = 0.0002**. Compare this to MEDFREQ's fit (R²=0.99,
+reliably losing) -- this is the opposite failure mode: **not reliably
+losing, just reliably doing nothing.** The curve oscillates in a narrow
+$8,600-$11,300 band for 7.5 years with no persistent trend in either
+direction. The same chart shows buy-and-hold XAUUSD over the identical
+window returning **+151.65%** -- the bot's mean-reversion/pullback
+mechanism structurally cannot participate in a multi-year directional
+move like that, by design, regardless of the edge question.
+
+**Monte Carlo** (5,000 bootstrap resamples, `data/regime_filter_monte_carlo.png`):
+
+| | 5th %ile | 25th %ile | 50th %ile | 75th %ile | 95th %ile |
+|---|---:|---:|---:|---:|---:|
+| Final equity | $6,087 (-39.1%) | $8,384 (-16.2%) | $10,037 (+0.4%) | $11,645 (+16.5%) | $14,073 (+40.7%) |
+
+Max drawdown: 11.5% (5th) / 23.8% (50th) / 50.0% (95th). **49.34% of
+the 5,000 resampled paths lose money** -- as close to a coin flip as a
+bootstrap result gets. The fan chart shows the actual realized path
+wandering inside the simulated distribution the entire way, never
+breaking toward either tail in a sustained way -- visually, exactly
+what a zero-edge random process looks like.
+
+**Statistical significance** (one-sample t-test, n=1,421, H0: mean
+return = 0): **t = 0.018, p = 0.986.** Not remotely significant --
+this is about as clean a "no measurable edge" result as a t-test
+produces.
+
+### How to improve the bot, concretely
+
+1. **The entry trigger, not the exit, is the bottleneck.** Win rate
+   (44.55%) sits almost exactly on the breakeven line implied by the
+   current payoff ratio (44.5% required) -- past sensitivity work
+   already showed widening/narrowing SL:TP only shifts that breakeven
+   line without moving the actual win rate (see the `atr_tp_mult`
+   extension in an earlier round, which found breakeven noise, not a
+   real improvement). The lever with headroom left is a **stricter
+   confluence requirement on entry** -- e.g., requiring the regime
+   gate to hold for N consecutive bars before allowing an entry
+   (filtering the noisy edge of a chop/expansion transition), or
+   raising the ATR-expansion threshold from ATR > 1.0x its SMA to a
+   fixed, standard buffer like ATR > 1.2x -- tested once, not searched.
+2. **The strategy structurally cannot capture trend, and gold spent
+   this whole period trending.** +151.65% buy-and-hold vs. +0.43% bot
+   isn't just an edge problem -- it's an architecture problem: a
+   pullback/mean-reversion trigger only ever captures short reversions
+   *within* a trend, never the trend itself. Worth testing as a
+   genuinely different hypothesis (not a parameter change): a small,
+   persistent core position sized to the D1 trend direction, held
+   independently of the tactical pullback trades, so a real structural
+   move isn't left entirely uncaptured the way this equity curve shows.
+3. **At profit factor 1.001, illustrative cost assumptions ($0.40
+   spread / $0.05 slippage) are large enough relative to the edge to
+   determine the sign of the result by themselves.** This is exactly
+   the situation the live paper-trading harness (`entries_v2_paper.py`,
+   already running) exists for -- real Deriv fills, not assumptions.
+   That's a more valuable next step than another backtest variant: let
+   it accumulate real fill data and compare realized costs against the
+   $0.40/$0.05 assumption directly.
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with
