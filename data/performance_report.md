@@ -743,6 +743,86 @@ build and test properly (walk-forward, training-data-only, same rigor
 as every prior round) -- not another new entry pattern on the same
 unfiltered regime.
 
+## Binary Regime Filter on XAUUSD_LOWFREQ v2 (the recommended lever, tested)
+
+**Verdict up front: a real, structural improvement to drawdown -- not a
+fix for the underlying no-edge finding.** This is the specific lever
+named after MEDFREQ, restated after v3, and restated again after
+breakout_v1: none of those three failures could tell a trending market
+from a ranging one before entering. Tested directly, in isolation, on
+the one strategy (entries_v2) with an already-established walk-forward
+baseline to compare against -- no new strategy invented, no grid search,
+same selected params as every prior v2 round.
+
+### What was built
+
+`src/regime_filter.py` -- a standalone, reusable binary gate:
+`atr_expansion_gate()` returns `True`/`False`/`None` (warmup) per bar,
+`True` when `ATR(14) > SMA(ATR(14), 50)` -- i.e. current volatility is
+above its own trailing average. Chosen over the ADX(14) alternative for
+two concrete reasons, not a coin flip between two options: it reuses
+`src.indicators.atr()` (already tested, already the SL/TP basis for
+entries_v2/v3 -- no new indicator implementation surface), and it's the
+exact mechanism this project's own prior reports already named as the
+thing worth testing. Both parameters are fixed, standard conventions
+(14 = the ATR default used everywhere in this project; 50 matches the
+existing "50-bar" convention) -- neither was searched or tuned.
+
+Integrated into `entries_v2.py` as a strict `use_regime_filter: bool`
+toggle on `LowfreqV2Config`, defaulting `False` so the already-running
+live paper-trading harness is completely unaffected unless explicitly
+turned on -- confirmed by regression test: gate-off output is
+byte-identical to the pre-integration code on the same data. The gate
+only ever blocks *new entries*; it never prevents managing or closing a
+position already open. No dynamic position sizing anywhere in this
+change, per the brief.
+
+### Full continuous training period (2018-01-01 to 2025-07-31), selected params
+
+| Metric | Baseline (gate OFF) | Filtered (gate ON) |
+|---|---:|---:|
+| Trades | 2,153 | 1,420 |
+| Win rate | 44.4% | 44.6% |
+| Profit Factor | 0.990 | 1.002 |
+| Max Drawdown | 33.33% | **23.80%** |
+| Sharpe | -0.567 | -0.547 |
+| Net P&L | -6.10% | +0.98% |
+
+### Walk-forward, 26 folds (this project's primary, established comparison metric)
+
+| Metric | Baseline (gate OFF) | Filtered (gate ON) |
+|---|---:|---:|
+| **Median Sharpe** | **-0.466** | **-0.602** |
+| Mean Sharpe | -0.723 | -0.597 |
+| Folds Sharpe-positive | 11/26 | 12/26 |
+
+**The mean improved; the median got worse -- checked why, not just
+reported the discrepancy.** Sorting both 26-fold Sharpe distributions
+shows the filter compresses the worst-case tail (the very bad folds get
+less catastrophic, e.g. the six worst baseline folds cluster below -3.1;
+filtered, below -2.0) while pulling the *typical, middle-of-the-pack*
+fold slightly more negative (13th/14th-ranked values: -0.48/-0.45
+baseline vs. -0.71/-0.49 filtered). This project has used the median
+specifically because it resists exactly this kind of tail-driven
+distortion -- a combo shouldn't win by being rescued by a couple of
+extreme folds while the typical case gets worse. Treating the median as
+authoritative here, consistent with how every parameter selection in
+this project has been made.
+
+### Verdict
+
+The filter delivers a real, structurally sensible, and honestly
+earned benefit: **meaningfully lower max drawdown (33.3% -> 23.8%) and
+34% fewer trades (2,153 -> 1,420)** from the same underlying signal
+set -- consistent with a chop-avoidance mechanism actually doing what
+it's supposed to do, not noise. It does **not** flip the walk-forward
+result from "no demonstrated edge" to "edge found" -- median Sharpe
+across 26 out-of-sample folds got worse, not better, and that's the
+metric this project trusts most for exactly this kind of question. If
+this strategy were ever deployed, the drawdown reduction alone would be
+worth keeping. It is not, on its own, the fix that reverses three
+rounds of "no genuine edge" findings.
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with

@@ -56,6 +56,7 @@ from src.candle import Candle
 from src.indicators import ema, atr
 from src.backtest_structures import sma
 from src.medfreq_strategy import align_htf_to_m5
+from src.regime_filter import atr_expansion_gate
 
 ATR_PERIOD = 14  # fixed, not tunable -- see module docstring
 
@@ -72,6 +73,12 @@ class LowfreqV2Config:
     pullback_tolerance_pct: float = 0.15  # how close (%) price must get to the EMA to count as a touch
     atr_sl_mult: float = 1.5
     atr_tp_mult: float = 2.5
+    # Binary on/off (src.regime_filter.atr_expansion_gate) -- NOT a 6th tunable parameter in
+    # the search-range sense; this is a toggle for a controlled A/B comparison against the
+    # already-established baseline, not something optimized over a range. Defaults False so
+    # every existing caller (the live paper-trading harness included) is completely unaffected
+    # unless this is explicitly turned on.
+    use_regime_filter: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -80,6 +87,7 @@ class LowfreqV2Config:
             "pullback_tolerance_pct": self.pullback_tolerance_pct,
             "atr_sl_mult": self.atr_sl_mult,
             "atr_tp_mult": self.atr_tp_mult,
+            "use_regime_filter": self.use_regime_filter,
         }
 
 
@@ -126,6 +134,10 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
     h1_ema = ema(h1_closes, config.pullback_ema_period)
     atr_vals = atr(h1_candles, ATR_PERIOD)
     tol = config.pullback_tolerance_pct / 100.0
+    # Computed unconditionally (cheap, single pass) but only ever consulted below when
+    # use_regime_filter is True -- entry/exit behavior is unchanged from before this
+    # integration whenever the flag is left at its default False.
+    regime_gate = atr_expansion_gate(h1_candles)
 
     trades: List[TradeRecordV2] = []
     position: Optional[dict] = None
@@ -167,6 +179,14 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
                 position = None
 
         if position is not None:
+            continue
+
+        # Binary Can_Trade gate -- entries only, never blocks managing/closing a position
+        # already open (that check happens above, before this point). No effect at all
+        # unless explicitly enabled. Explicit "is not True" (not "not regime_gate[i]") --
+        # the gate is None during its own warmup, and None must mean "can't trade yet",
+        # not silently pass as truthy-not-False would.
+        if config.use_regime_filter and regime_gate[i] is not True:
             continue
 
         price = c.close
