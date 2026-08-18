@@ -87,6 +87,17 @@ class RateLimited(Exception):
     pass
 
 
+FETCHER_USER_AGENT = "AMARO-research-fetcher/1.0 (+https://github.com/123scott/trading-robot)"
+# Identifies this client honestly to Dukascopy's server -- deliberately NOT a spoofed
+# browser UA and deliberately NOT paired with proxy rotation. A 429 here is Dukascopy's
+# datafeed.dukascopy.com endpoint (the community-known per-hour tick archive, NOT their
+# documented/paid bulk S3 export -- see module docstring) doing exactly what rate limits
+# are for: protecting itself from sustained high-volume automated load, which is exactly
+# what this project's own back-to-back multi-symbol fetches produced. The fix is to
+# request less aggressively and back off harder when that happens (see the circuit
+# breaker in fetch_and_cache_range below), not to disguise where the load is coming from.
+
+
 def _fetch_one_hour(symbol: str, dt: datetime, session: requests.Session, timeout: float = 20.0,
                      max_retries: int = 6) -> Optional[bytes]:
     """Returns raw bytes (possibly empty = genuinely closed market), or raises after exhausting retries on 429/5xx."""
@@ -97,6 +108,15 @@ def _fetch_one_hour(symbol: str, dt: datetime, session: requests.Session, timeou
         if resp.status_code == 200:
             return resp.content  # empty body here is a REAL signal: market closed that hour
         if resp.status_code == 429 or resp.status_code >= 500:
+            # Respect a real Retry-After if the server ever sends one (it doesn't today,
+            # confirmed by direct inspection -- but honor it if that changes) rather than
+            # always falling back to our own guessed backoff schedule.
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after is not None:
+                try:
+                    delay = max(delay, float(retry_after))
+                except ValueError:
+                    pass
             time.sleep(delay)
             delay = min(delay * 2, 30.0)
             continue
@@ -179,14 +199,42 @@ def _hour_range(start: datetime, end: datetime):
         cur += timedelta(hours=1)
 
 
+# Circuit breaker (fetch-level, not per-hour): the failure mode actually observed on this
+# project's EURUSD/GBPUSD fetches wasn't a few bad hours -- it was Dukascopy rate-limiting
+# the whole client, after which EVERY remaining hour independently exhausted its own
+# per-hour retries and got marked ERROR, at full speed, for 14,000+ hours in a row. The
+# per-hour retry logic in _fetch_one_hour had no way to notice that pattern. This does:
+# hours are processed in small chunks, and if a chunk's error rate is high, the ENTIRE
+# fetch pauses for a real cooldown before trying more -- instead of continuing to hammer
+# a server that has already said "too many requests" thousands of times in a row.
+CHUNK_SIZE = 150
+CHUNK_ERROR_RATE_TRIP = 0.5       # >=50% of a chunk erroring trips the breaker
+COOLDOWN_BASE_SECONDS = 120.0     # first cooldown after a trip
+COOLDOWN_MAX_SECONDS = 1800.0     # cap at 30 min between chunks
+MAX_CONSECUTIVE_TRIPS = 3         # give up cleanly rather than grinding through a long-lived block
+
+
+class CircuitBreakerTripped(RuntimeError):
+    """Raised when MAX_CONSECUTIVE_TRIPS chunks in a row show a sustained block -- stop, don't grind."""
+
+
 def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
-                           max_workers: int = 8, log=print) -> dict:
+                           max_workers: int = 4, log=print) -> dict:
     """
     Fetches every missing hour in [start, end) from Dukascopy, buckets the
     real ticks into M5 OHLC bars, and appends them to the persistent cache.
     Safe to interrupt and re-run -- already-processed hours (tracked in
     dukascopy_hours_done.csv, independent of how many M5 bars they
-    produced) are skipped.
+    produced) are skipped, so resuming after an interruption (including a
+    circuit-breaker stop) naturally fills in exactly what's missing with
+    no gaps or duplicate timestamps -- no separate "merge" step needed,
+    this IS the merge, by construction.
+
+    max_workers default lowered from 8 to 4 after the sustained-block
+    incident this project hit fetching EURUSD/GBPUSD -- deliberately more
+    conservative than before, not less, given datafeed.dukascopy.com's
+    per-hour endpoint is a community-known access pattern, not Dukascopy's
+    documented/supported bulk path (see module docstring).
     """
     if symbol not in POINT_VALUE:
         raise ValueError(f"No Dukascopy point value configured for {symbol}.")
@@ -204,6 +252,7 @@ def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
 
     fetched_hours = empty_hours = error_hours = 0
     session = requests.Session()
+    session.headers.update({"User-Agent": FETCHER_USER_AGENT})
     hours_buffer: list = []
     m5_buffer: list = []
 
@@ -226,29 +275,54 @@ def fetch_and_cache_range(symbol: str, start: str, end: Optional[str] = None,
         except Exception as e:
             return hour_dt, None, e
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_work, h): h for h in todo}
-        done_count = 0
-        for fut in as_completed(futures):
-            hour_dt, ticks, err = fut.result()
-            done_count += 1
-            if err is not None:
-                error_hours += 1
-                hours_buffer.append([hour_dt.isoformat(), "ERROR"])
-            elif not ticks:
-                empty_hours += 1
-                hours_buffer.append([hour_dt.isoformat(), 0])
-            else:
-                fetched_hours += 1
-                hours_buffer.append([hour_dt.isoformat(), len(ticks)])
-                m5_buffer.extend(_bucket_ticks_to_m5(hour_dt, ticks, point))
+    consecutive_trips = 0
+    done_count = 0
+    chunks = [todo[i:i + CHUNK_SIZE] for i in range(0, len(todo), CHUNK_SIZE)]
 
-            if len(hours_buffer) >= 200 or len(m5_buffer) >= 2000:
-                _flush()
-            if done_count % 2000 == 0:
-                log(f"  ...{done_count}/{len(todo)} hours processed "
-                    f"({fetched_hours} with data, {empty_hours} empty, {error_hours} errors)")
-    _flush()
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for chunk_idx, chunk in enumerate(chunks):
+            futures = {pool.submit(_work, h): h for h in chunk}
+            chunk_errors = 0
+            for fut in as_completed(futures):
+                hour_dt, ticks, err = fut.result()
+                done_count += 1
+                if err is not None:
+                    error_hours += 1
+                    chunk_errors += 1
+                    hours_buffer.append([hour_dt.isoformat(), "ERROR"])
+                elif not ticks:
+                    empty_hours += 1
+                    hours_buffer.append([hour_dt.isoformat(), 0])
+                else:
+                    fetched_hours += 1
+                    hours_buffer.append([hour_dt.isoformat(), len(ticks)])
+                    m5_buffer.extend(_bucket_ticks_to_m5(hour_dt, ticks, point))
+
+            _flush()  # flush every chunk -- keeps interrupted/tripped runs resumable with minimal rework
+            error_rate = chunk_errors / len(chunk) if chunk else 0.0
+            log(f"  ...{done_count}/{len(todo)} hours processed "
+                f"({fetched_hours} with data, {empty_hours} empty, {error_hours} errors) "
+                f"[chunk {chunk_idx + 1}/{len(chunks)}, this chunk's error rate {error_rate:.0%}]")
+
+            if error_rate >= CHUNK_ERROR_RATE_TRIP:
+                consecutive_trips += 1
+                if consecutive_trips >= MAX_CONSECUTIVE_TRIPS:
+                    log(f"Circuit breaker: {consecutive_trips} consecutive chunks with >={CHUNK_ERROR_RATE_TRIP:.0%} "
+                        f"error rate -- this looks like a sustained block, not transient rate-limiting. "
+                        f"Stopping here rather than grinding through the remaining "
+                        f"{len(todo) - done_count} hours at the same failure rate. Re-run this function "
+                        f"later (already-done hours are skipped automatically) once the block has cleared.")
+                    raise CircuitBreakerTripped(
+                        f"{consecutive_trips} consecutive chunks blocked for {symbol}; stopped after "
+                        f"{done_count}/{len(todo)} hours. {fetched_hours} fetched, {error_hours} errored."
+                    )
+                cooldown = min(COOLDOWN_BASE_SECONDS * (2 ** (consecutive_trips - 1)), COOLDOWN_MAX_SECONDS)
+                log(f"Circuit breaker tripped (error rate {error_rate:.0%} >= {CHUNK_ERROR_RATE_TRIP:.0%}) -- "
+                    f"pausing the whole fetch for {cooldown:.0f}s before continuing "
+                    f"(trip {consecutive_trips}/{MAX_CONSECUTIVE_TRIPS}).")
+                time.sleep(cooldown)
+            else:
+                consecutive_trips = 0
 
     log(f"Done. {fetched_hours} hours with real ticks, {empty_hours} empty (market closed), {error_hours} errors.")
     return {"fetched_hours": fetched_hours, "empty_hours": empty_hours, "error_hours": error_hours,
