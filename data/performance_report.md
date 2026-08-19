@@ -918,6 +918,116 @@ produces.
    it accumulate real fill data and compare realized costs against the
    $0.40/$0.05 assumption directly.
 
+## N-Bar Persistence Filter: Locked Train/Test Protocol (strongest result yet, real tension)
+
+**Verdict up front: the most credible positive result this project has
+produced -- and still not proof, because training didn't earn it.**
+Second, and now final, use of the reserved 2025-08 to 2026-07 holdout
+for this model family (see the caveat where this was authorized). One
+change from the regime-filtered baseline: entries require the ATR-
+expansion gate to hold for 3 *consecutive* bars, not just the current
+one (`regime_confirm_bars=3`, fixed, matching MEDFREQ's already-
+justified `confirm_bars` convention -- not searched). Everything else
+identical to the prior round's locked params.
+
+### Training phase (2018-01-01 to 2025-07-31) -- honestly reported against the stated targets
+
+| Metric | Value | Target | Result |
+|---|---:|---:|:---:|
+| Trades | 1,073 | -- | -- |
+| Win rate | 45.11% | -- | -- |
+| Profit Factor | 1.018 | >1.3 | **MISS** |
+| Expectancy | $0.56/trade | positive | PASS |
+| Sharpe | -0.519 | >0.5 | **MISS** |
+| Sortino | -0.742 | -- | -- |
+| Max Drawdown | 14.30% | -- | -- |
+| Net P&L | +6.00% | -- | -- |
+
+Real, structural improvement over the regime-filter-only baseline (PF
+1.001->1.018, max DD 23.80%->14.30%, net P&L +0.43%->+6.00%, 348 fewer,
+presumably higher-quality trades) -- but **misses both stated targets
+plainly.** No further tuning was attempted to close that gap (that's
+exactly the curve-fitting this round was designed to avoid) -- these
+parameters were locked here and carried into the holdout run unchanged.
+
+### Holdout phase (2025-08-01 to 2026-07-31) -- locked params, run once
+
+| Metric | Value |
+|---|---:|
+| Trades | 132 |
+| Win rate | 56.82% |
+| Profit Factor | **1.544** |
+| Expectancy | $23.61/trade |
+| Sharpe | **1.843** |
+| Sortino | 2.994 |
+| Max Drawdown | 4.32% |
+| Net P&L | **+31.17%** |
+| Buy-and-hold XAUUSD, same window | +20.32% |
+
+### Why this one is being taken more seriously than every prior "good year"
+
+Every previous good-looking holdout result in this project failed under
+scrutiny (original v2 baseline: p=0.186, not significant, 58% of its
+Sharpe from 3 trades). Applied the identical checks here rather than
+accept a good number at face value:
+
+- **Significance: t=2.156, p=0.033 -- significant at 0.05.** First
+  holdout result in this project's history to clear that bar.
+- **Outlier sensitivity: removing the single biggest winner ($593.57)
+  drops Sharpe 1.843->1.554 (-15.7%)** -- compare to the original v2
+  baseline's -29.4% from the same test. **Removing the top 3 winners
+  drops Sharpe to 1.179 (-36.0%) but net P&L stays positive at +19.69%**
+  (vs. the original baseline collapsing to a barely-there +12.11%
+  from +23.59%, an already-thin result). Less outlier-dependent, not
+  outlier-free.
+- **Monthly concentration: top 2 months = 47.9% of profit** (Feb 2026
+  alone = 33.5%) -- still concentrated, but 10 of 12 months were
+  net-positive (only Aug 2025 and Mar 2026 were negative, both mild) --
+  a materially more consistent pattern than the prior result's two
+  large offsetting negative months.
+- **Monte Carlo** (5,000 resamples, `data/n3_holdout_monte_carlo.png`):
+  median final equity +30.66%, **only 1.42% of paths lose money**
+  (vs. 49.34% for the same design's training-period Monte Carlo, and
+  vs. much higher losing-path rates for every prior "good" holdout in
+  this project), **76.16% of paths beat buy-and-hold.** The fan chart
+  shows the actual realized path tracking close to the median simulated
+  path the entire way -- not hugging a tail, not carried by a lucky
+  early or late run.
+
+### The tension this does NOT resolve
+
+**Training Sharpe was -0.519. Holdout Sharpe was +1.843.** That is
+still a dramatic reversal, and one clean, better-behaved year -- however
+much more rigorously it holds up than every prior "good year" in this
+project -- cannot by itself overturn 7.5 years of training evidence that
+never validated this design's own stated targets. Two honest
+explanations, not resolved by this round's data alone: the holdout
+window may simply have been a cleaner, more trend-coherent regime than
+training's mix of 2018 range-bound conditions, the 2020 COVID
+crash-and-recovery, and 2022's inflation shock -- in which case this is
+regime-dependent performance, not a durable edge; or the entry-quality
+filter genuinely helps more than the aggregate training number shows,
+diluted by exactly the choppy sub-periods it's designed to sit out --
+in which case a per-regime training breakdown would show it, and that
+breakdown was not run this round (would require reopening the training
+data after already locking parameters against it, which defeats the
+purpose of locking them). That check, if wanted, is a legitimate next
+step -- but it must be done on the training data that's still available
+for it, never by looking at the holdout again.
+
+### What this means practically
+
+This is the strongest, most rigorously-surviving candidate this project
+has produced -- genuinely worth prioritizing over the unfiltered
+baseline currently running live. **Given that, the live paper-trading
+harness (`entries_v2_paper.py`) is being updated to this exact locked
+configuration** (`use_regime_filter=True, regime_confirm_bars=3`,
+otherwise unchanged) so the forward-test evidence now accumulating is
+for the best-validated candidate, not the original weaker baseline --
+still zero real capital, same as every paper-trading process in this
+project. **Not, on the strength of one holdout year with training
+evidence this mixed, a case for real money.**
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with

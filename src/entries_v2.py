@@ -79,6 +79,14 @@ class LowfreqV2Config:
     # every existing caller (the live paper-trading harness included) is completely unaffected
     # unless this is explicitly turned on.
     use_regime_filter: bool = False
+    # How many CONSECUTIVE bars the gate must have already held True before an entry is
+    # allowed -- targets the specific failure mode diagnosed in the last round (the noisy
+    # edge of a chop/expansion transition firing the gate on a single bar that reverts
+    # immediately after). Fixed at 3, not searched -- reuses the exact convention already
+    # independently justified for medfreq_strategy.py's confirm_bars anti-whipsaw filter,
+    # not a new number invented for this round. 1 (the default) means "no persistence
+    # requirement," i.e. identical to the prior round's behavior.
+    regime_confirm_bars: int = 1
 
     def as_dict(self) -> dict:
         return {
@@ -88,6 +96,7 @@ class LowfreqV2Config:
             "atr_sl_mult": self.atr_sl_mult,
             "atr_tp_mult": self.atr_tp_mult,
             "use_regime_filter": self.use_regime_filter,
+            "regime_confirm_bars": self.regime_confirm_bars,
         }
 
 
@@ -138,6 +147,16 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
     # use_regime_filter is True -- entry/exit behavior is unchanged from before this
     # integration whenever the flag is left at its default False.
     regime_gate = atr_expansion_gate(h1_candles)
+    # Precomputed as its own series (not a counter mutated inside the main loop below) --
+    # the main loop has several `continue` statements before reaching the entry check, and
+    # a counter that only updates on iterations that reach that point would silently miss
+    # bars and desync from the true consecutive-True count. This has no such dependency on
+    # loop control flow: it's purely a function of regime_gate itself, computed once.
+    regime_streak: List[int] = []
+    _streak = 0
+    for _g in regime_gate:
+        _streak = _streak + 1 if _g is True else 0
+        regime_streak.append(_streak)
 
     trades: List[TradeRecordV2] = []
     position: Optional[dict] = None
@@ -183,10 +202,12 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
 
         # Binary Can_Trade gate -- entries only, never blocks managing/closing a position
         # already open (that check happens above, before this point). No effect at all
-        # unless explicitly enabled. Explicit "is not True" (not "not regime_gate[i]") --
-        # the gate is None during its own warmup, and None must mean "can't trade yet",
-        # not silently pass as truthy-not-False would.
-        if config.use_regime_filter and regime_gate[i] is not True:
+        # unless explicitly enabled. regime_streak[i] is 0 whenever regime_gate[i] isn't
+        # exactly True (including the None-during-warmup case), so requiring
+        # regime_streak[i] >= regime_confirm_bars naturally subsumes the old direct
+        # "is not True" check -- regime_confirm_bars=1 (the default) reproduces the prior
+        # round's exact behavior with no persistence requirement.
+        if config.use_regime_filter and regime_streak[i] < config.regime_confirm_bars:
             continue
 
         price = c.close

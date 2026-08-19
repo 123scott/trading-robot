@@ -33,11 +33,16 @@ both and race with that already-running process).
 
 Default parameters are the walk-forward-selected combo from the
 retraining round (trend_sma_period=50, pullback_ema_period=21,
-pullback_tolerance_pct=0.20, atr_sl_mult=2.0, atr_tp_mult=2.5) -- the
-one combo that went through the full sensitivity + regime pipeline, not
-the tp=5.0 "breakeven noise" point found while extending the grid (see
-data/performance_report.md's Task 1 -- that value was never validated
-beyond the grid search itself and isn't treated as a real answer).
+pullback_tolerance_pct=0.20, atr_sl_mult=2.0, atr_tp_mult=2.5), PLUS the
+binary ATR-expansion regime filter with a 3-bar persistence requirement
+(use_regime_filter=True, regime_confirm_bars=3) -- the strongest, most
+rigorously-surviving candidate this project has produced (holdout
+Sharpe 1.843, p=0.033 significant, Monte Carlo 1.42% of paths losing --
+see data/performance_report.md's "N-Bar Persistence Filter" section for
+the full result and the honest caveat: training-period Sharpe was
+still -0.519, so this is promising, not proven). Not the tp=5.0
+"breakeven noise" point found while extending the grid in an earlier
+round -- that value was never validated beyond the grid search itself.
 
 Usage:
     python -m src.entries_v2_paper --max-iterations 1          # smoke test, one poll then exit
@@ -65,7 +70,8 @@ PAPER_LOG_HEADER = ["logged_at", "pair", "direction", "entry_time", "entry_price
                      "running_trades", "running_win_rate_pct", "running_pf", "running_net_pnl_pct"]
 
 DEFAULT_CONFIG = LowfreqV2Config(trend_sma_period=50, pullback_ema_period=21,
-                                  pullback_tolerance_pct=0.20, atr_sl_mult=2.0, atr_tp_mult=2.5)
+                                  pullback_tolerance_pct=0.20, atr_sl_mult=2.0, atr_tp_mult=2.5,
+                                  use_regime_filter=True, regime_confirm_bars=3)
 H1_WINDOW = 500   # ~3 weeks of H1 bars -- comfortably covers EMA(21)/ATR(14) warmup plus real setup history
 DAILY_WINDOW = 100  # comfortably covers trend_sma_period=50 warmup
 
