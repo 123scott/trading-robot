@@ -188,14 +188,19 @@ string HandleTick(string json)
 //+------------------------------------------------------------------+
 string HandleOrder(string json)
   {
-   string symbol    = ExtractString(json, "symbol");
-   string direction = ExtractString(json, "direction");
-   double volume    = ExtractDouble(json, "volume");
-   double sl        = ExtractDouble(json, "sl");
-   double tp        = ExtractDouble(json, "tp");
-   long   magic     = ExtractLong(json, "magic");
-   string comment   = ExtractString(json, "comment");
-   long   deviation = ExtractLong(json, "deviation");
+   string symbol         = ExtractString(json, "symbol");
+   string direction      = ExtractString(json, "direction");
+   double volume         = ExtractDouble(json, "volume");
+   double sl             = ExtractDouble(json, "sl");
+   double tp             = ExtractDouble(json, "tp");
+   long   magic          = ExtractLong(json, "magic");
+   string comment        = ExtractString(json, "comment");
+   long   deviation      = ExtractLong(json, "deviation");
+   // Slippage tracking: Python sends the price it observed via its own last TICK call
+   // BEFORE submitting the order (the ask for a buy, the bid for a sell) as
+   // "expected_price". 0/absent disables tracking for that call (e.g. a caller that
+   // never queried a tick first) -- never fabricated on this end.
+   double expected_price = ExtractDouble(json, "expected_price");
 
    trade.SetExpertMagicNumber(magic > 0 ? magic : DefaultMagic);
    trade.SetDeviationInPoints((int)(deviation > 0 ? deviation : 20));
@@ -208,9 +213,23 @@ string HandleOrder(string json)
       return StringFormat("{\"ok\":false,\"error\":\"order failed, retcode=%d: %s\"}",
                            trade.ResultRetcode(), trade.ResultRetcodeDescription());
 
+   double fillPrice = trade.ResultPrice();
+   // Signed: positive means the fill was worse than expected (higher for a buy, lower for
+   // a sell), negative means better -- sign convention matches "adverse slippage is positive".
+   double slippage = 0.0;
+   bool   hasSlippage = (expected_price > 0.0);
+   if(hasSlippage)
+      slippage = (direction == "buy") ? (fillPrice - expected_price) : (expected_price - fillPrice);
+
+   if(hasSlippage)
+      return StringFormat(
+         "{\"ok\":true,\"retcode\":%d,\"ticket\":%I64u,\"price\":%.5f,\"volume\":%.2f,"
+         "\"slippage\":%.5f,\"comment\":\"%s\"}",
+         trade.ResultRetcode(), trade.ResultDeal(), fillPrice, trade.ResultVolume(),
+         slippage, trade.ResultRetcodeDescription());
    return StringFormat(
       "{\"ok\":true,\"retcode\":%d,\"ticket\":%I64u,\"price\":%.5f,\"volume\":%.2f,\"comment\":\"%s\"}",
-      trade.ResultRetcode(), trade.ResultDeal(), trade.ResultPrice(), trade.ResultVolume(),
+      trade.ResultRetcode(), trade.ResultDeal(), fillPrice, trade.ResultVolume(),
       trade.ResultRetcodeDescription());
   }
 

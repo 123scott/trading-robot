@@ -77,7 +77,7 @@ from src import mt5_zmq_bridge as bridge
 MAGIC = 202607
 LIVE_LOG_PATH = os.path.join(memory.DATA_DIR, "mt5_live_trades.csv")
 LIVE_LOG_HEADER = ["timestamp", "symbol", "mt5_symbol", "action", "price", "lot",
-                    "sl", "tp", "ticket", "reason", "outcome", "pnl", "comment"]
+                    "sl", "tp", "ticket", "reason", "outcome", "pnl", "slippage", "comment"]
 
 ATR_PERIOD = 14
 DEFAULT_ATR_SL_MULT = 2.0
@@ -94,7 +94,7 @@ def _ensure_live_log() -> None:
 
 def _log_live_trade(symbol: str, mt5_symbol: str, action: str, price: Optional[float], lot: Optional[float],
                      sl: Optional[float], tp: Optional[float], ticket: Optional[int], reason: str,
-                     outcome: str, pnl: float, comment: str) -> None:
+                     outcome: str, pnl: float, comment: str, slippage: Optional[float] = None) -> None:
     _ensure_live_log()
     ts = datetime.now(timezone.utc).isoformat()
     with open(LIVE_LOG_PATH, "a", newline="", encoding="utf-8") as f:
@@ -104,7 +104,9 @@ def _log_live_trade(symbol: str, mt5_symbol: str, action: str, price: Optional[f
                                  f"{sl:.5f}" if sl is not None else "",
                                  f"{tp:.5f}" if tp is not None else "",
                                  ticket if ticket is not None else "",
-                                 reason, outcome, f"{pnl:.2f}", comment])
+                                 reason, outcome, f"{pnl:.2f}",
+                                 f"{slippage:.5f}" if slippage is not None else "",
+                                 comment])
 
 
 def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional: float = 10_000.0,
@@ -177,16 +179,20 @@ def run_live(symbol: str = "XAUUSD", mt5_symbol: Optional[str] = None, notional:
                                 balance = bridge.get_balance()
                                 risk_amount = balance * (risk_pct / 100.0)
                                 lot = bridge.calc_lot_size(mt5_symbol, risk_amount, atr_sl_mult * a)
-                                result = bridge.place_market_order(mt5_symbol, "buy", lot, sl=sl, tp=tp, magic=MAGIC)
+                                result = bridge.place_market_order(mt5_symbol, "buy", lot, sl=sl, tp=tp,
+                                                                     magic=MAGIC, expected_price=entry_est)
                                 tracker.apply(Action.BUY)
                                 if result.success:
+                                    slip_str = f", slippage {result.slippage:+.5f} vs quoted {entry_est:.5f}" \
+                                        if result.slippage is not None else ""
                                     log(f"  => [MT5 LIVE] BUY {lot} lots @ {result.price} (SL {sl:.2f} / TP {tp:.2f}, "
-                                        f"ticket {result.ticket}).\n")
+                                        f"ticket {result.ticket}{slip_str}).\n")
                                 else:
                                     log(f"  => [MT5 LIVE] BUY FAILED: {result.comment} (retcode {result.retcode}).\n")
                                 _log_live_trade(symbol, mt5_symbol, "BUY", result.price, lot, sl, tp,
                                                  result.ticket, intent.reason,
-                                                 "OPEN" if result.success else "FAILED", 0.0, result.comment)
+                                                 "OPEN" if result.success else "FAILED", 0.0, result.comment,
+                                                 slippage=result.slippage)
 
                         elif final_action == "SELL":
                             pos = bridge.get_open_position(mt5_symbol, magic=MAGIC)

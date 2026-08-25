@@ -123,6 +123,32 @@ class DerivApiError(RuntimeError):
     """Raised when Deriv's API responds to a request with an {"error": ...} payload."""
 
 
+async def sample_current_spread(ticker: str, timeout: float = 10.0) -> dict:
+    """
+    Opens a short-lived subscription, takes exactly the first real tick's bid/ask, then
+    unsubscribes and closes -- for telemetry (comparing a real observed spread against the
+    project's illustrative cost-model assumption), not for continuous streaming (that's
+    stream_deriv_ticks). Returns {"bid", "ask", "spread", "epoch"}. Raises DerivApiError on
+    an API-level rejection, or asyncio.TimeoutError if no tick arrives within `timeout`.
+    """
+    async with websockets.connect(DERIV_WS_URL, ssl=_SSL_CTX, open_timeout=15) as ws:
+        await ws.send(json.dumps({"ticks": ticker, "subscribe": 1}))
+        raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+        msg = json.loads(raw)
+        if "error" in msg:
+            raise DerivApiError(f"Deriv rejected tick subscription for {ticker!r}: "
+                                 f"{msg['error'].get('code')}: {msg['error'].get('message')}")
+        if msg.get("msg_type") != "tick" or "tick" not in msg:
+            raise DerivApiError(f"Unexpected response sampling {ticker!r}: {msg}")
+        tick = msg["tick"]
+        try:
+            await ws.send(json.dumps({"forget_all": "ticks"}))
+        except Exception:
+            pass  # best-effort unsubscribe -- the `async with` close() below tears the connection down regardless
+        bid, ask = float(tick["bid"]), float(tick["ask"])
+        return {"bid": bid, "ask": ask, "spread": ask - bid, "epoch": int(tick["epoch"])}
+
+
 async def stream_deriv_ticks(ticker: str, on_tick: Callable[[dict], None],
                               stop_event: Optional[asyncio.Event] = None) -> None:
     """

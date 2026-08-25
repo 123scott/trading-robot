@@ -118,6 +118,11 @@ class OrderResult:
     price: Optional[float]
     volume: Optional[float]
     comment: str
+    slippage: Optional[float] = None
+    # Signed: positive = fill was worse than expected (adverse), negative = better.
+    # None whenever the caller didn't supply expected_price -- never estimated after
+    # the fact by this module, only ever computed by the EA from a real quote the
+    # caller actually observed before sending the order.
 
 
 _context: Optional["zmq.Context"] = None
@@ -240,11 +245,21 @@ def get_open_position(symbol: str, magic: Optional[int] = None) -> Optional[dict
 
 def place_market_order(symbol: str, direction: str, lot: float, sl: Optional[float] = None,
                         tp: Optional[float] = None, magic: int = 202607, comment: str = "amaro-bot",
-                        deviation: int = 20) -> OrderResult:
+                        deviation: int = 20, expected_price: Optional[float] = None) -> OrderResult:
+    """
+    expected_price: the price the caller actually observed via a prior get_tick() call
+    (the ask for a buy, the bid for a sell) -- pass it to get real slippage tracking in
+    the response. Deliberately not fetched automatically in here: the caller (e.g.
+    mt5_live.py) already has this from its own pre-order tick check in every real call
+    site, and re-fetching here would add a network round-trip and a timing gap between
+    "the price we decided on" and "the price we measure slippage against."
+    """
     resp = _send({"cmd": "ORDER", "symbol": symbol, "direction": direction, "volume": lot,
-                   "sl": sl or 0.0, "tp": tp or 0.0, "magic": magic, "comment": comment, "deviation": deviation})
+                   "sl": sl or 0.0, "tp": tp or 0.0, "magic": magic, "comment": comment,
+                   "deviation": deviation, "expected_price": expected_price or 0.0})
     return OrderResult(success=True, retcode=resp.get("retcode"), ticket=resp.get("ticket"),
-                        price=resp.get("price"), volume=resp.get("volume"), comment=resp.get("comment", ""))
+                        price=resp.get("price"), volume=resp.get("volume"), comment=resp.get("comment", ""),
+                        slippage=resp.get("slippage"))
 
 
 def close_position(symbol: str, ticket: int, volume: float, direction: str,

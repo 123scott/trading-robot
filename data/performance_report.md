@@ -1028,6 +1028,118 @@ still zero real capital, same as every paper-trading process in this
 project. **Not, on the strength of one holdout year with training
 evidence this mixed, a case for real money.**
 
+## Persistence Filter Re-Validation, MT5 Bridge, Telemetry, Data Pipeline (four-task round)
+
+### 1. Per-regime breakdown -- training data only, holdout never touched
+
+Built `src/regime_breakdown.py` to test the specific open question left
+after the N-bar persistence round: does the filter's benefit
+concentrate in trending conditions? Classifier: **D1 ADX(14)**, the
+standard Wilder trend-strength measure, deliberately independent of the
+strategy's own ATR-expansion entry gate (which tests volatility
+expansion, not directional persistence -- reusing it would be circular,
+since the strategy never trades when that gate is already False). Added
+`adx()` to `src/indicators.py` and verified it correct against
+hand-traceable synthetic cases before trusting it on real data: a pure
+idealized uptrend converges to exactly 100, pure alternating chop stays
+low (~3.6) -- confirms no off-by-one in the Wilder smoothing before
+using it for anything real.
+
+Conventional thresholds (ADX > 25 trending, < 20 ranging, 20-25
+transitional), not fit to this data. Flagship config
+(`use_regime_filter=True, regime_confirm_bars=3`), full training period
+(2018-01-01 to 2025-07-31), each trade classified by D1 ADX at its own
+entry time (same no-lookahead alignment already used for the daily
+trend filter):
+
+| Regime | Trades | Win % | PF | Expectancy | Sharpe | Net P&L |
+|---|---:|---:|---:|---:|---:|---:|
+| Trending (ADX > 25) | 435 | 46.2% | 1.051 | +$1.69 | -0.664 | +7.35% |
+| Ranging (ADX < 20) | 433 | 45.5% | 1.050 | +$1.41 | -0.911 | +6.09% |
+| Transitional (20-25) | 205 | 42.0% | 0.885 | **-$3.63** | -1.799 | **-7.43%** |
+
+**Not the result the hypothesis predicted -- reported exactly as found.**
+Trending and ranging regimes perform almost identically (both modestly
+positive, PF ~1.05 either way) -- the persistence gate's benefit does
+NOT concentrate specifically in trending conditions the way "trending
+vs. ranging" framed it. The real differentiator is the **20-25
+transitional band**, where losses concentrate: regime-change moments,
+neither clearly trending nor clearly ranging, are exactly where a
+lagging trend-following entry gets caught wrong-footed. A more targeted
+next filter would exclude the transitional zone specifically, not
+generically favor "trending" over "ranging." Sharpe stays negative in
+all three buckets even where expectancy is positive -- consistent with
+this design's persistent theme (thin, high-variance edge, not absent
+but not comfortable either).
+
+### 2. MT5 ZeroMQ bridge -- completed at the source level; compilation not possible here
+
+**Stated plainly: this environment has no MetaEditor or MT5 terminal --
+MQL5 compilation requires that Windows-based IDE, which cannot run in
+this macOS CLI session.** "Complete" and "compile" are being reported
+separately rather than conflated. Reviewed the EA
+(`mt5_bridge_ea/AmaroZmqBridge.mq5`) against the three named
+requirements: non-blocking bid/ask polling and market-order/SL-TP
+handling already existed from earlier rounds (`OnTimer` + `ZMQ_DONTWAIT`
+recv; `TICK` command; `CTrade.Buy/Sell` with `sl`/`tp`). **Slippage
+tracking did not exist and was added**: `HandleOrder` now accepts an
+optional `expected_price` (the quote the Python caller observed via its
+own prior `TICK` call, never fabricated on the EA side) and returns a
+signed `slippage` field (fill price vs. that expected price; positive =
+adverse). Threaded through the whole chain -- `mt5_zmq_bridge.OrderResult`
+gained a `slippage` field, `mt5_live.py`'s BUY path now passes the ask
+price it already fetches and logs the result (new `slippage` column in
+`data/mt5_live_trades.csv`).
+
+**Verified everything that's actually testable without a compiler**:
+the Python-side protocol, parsing, and sign convention were confirmed
+end-to-end against a mocked EA responder (expected 2350.40, simulated
+fill 2350.55, correctly computed +0.15 adverse slippage). The MQL5
+source itself mirrors this exact arithmetic and is written against
+MQL5's standard, documented `CTrade` API (the same high-confidence
+surface the rest of the EA already relied on) -- but remains genuinely
+uncompiled and untested against a real terminal, same caveat as every
+other MT5 module in this project.
+
+### 3. Spread/slippage telemetry -- code correct and verified, live sampling currently blocked externally
+
+Built `src/spread_telemetry.py` to sample real Deriv bid/ask and log it
+against the project's $0.40 assumed spread. Added
+`data_deriv.sample_current_spread()` for a single real-tick sample
+(distinct from the existing continuous `stream_deriv_ticks`).
+
+**Found a real, current, external problem while testing it -- not a bug
+in this code.** Deriv's live tick-*subscribe* endpoint for `frxXAUUSD`
+is rejecting the symbol (`InvalidSymbol`) right now. Before assuming
+that meant a bug in the new function, reproduced the identical failure
+in the already-established `stream_deriv_ticks()` -- the same function
+`live_monitor.py`'s `--paper` mode has used successfully throughout
+this entire project. Historical candle data
+(`fetch_deriv_candles_async`, what `entries_v2_paper.py`/
+`entries_v3_paper.py` actually poll) is unaffected -- confirmed still
+working, real recent gold prices returned correctly. This is narrowly a
+live tick-subscribe issue on Deriv's side, not a broader outage, and not
+something more retry logic fixes.
+
+The logging and summary logic were verified correct against mocked
+samples (clearly not live data, never written to the real telemetry
+log). This module will start producing real comparison data the moment
+Deriv's tick-subscribe access is restored -- nothing further to build,
+just an external dependency currently unavailable.
+
+### 4. Dukascopy GBPUSD -- code already complete; the server, not the code, is the blocker
+
+The rate-limiting/retry logic asked for here already exists from an
+earlier round (circuit breaker, exponential backoff, `Retry-After`
+handling, chunked processing, verified against mocked failure
+scenarios). Re-probed GBPUSD directly before doing anything else: still
+**503 Service Unavailable**, same as weeks ago. No amount of retry
+logic makes a server that's returning 503 start returning data --
+confirmed this is a server-availability problem, not a client-side gap,
+and did not re-attempt a bulk fetch against a source already showing
+sustained unavailability (exactly the behavior the circuit breaker
+exists to prevent).
+
 ## XAUUSD_MEDFREQ: Top-Down MTF Model -- FAILS, Decisively (read before using)
 
 **Verdict up front: as specified, this strategy loses money with
