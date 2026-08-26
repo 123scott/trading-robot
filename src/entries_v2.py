@@ -53,10 +53,19 @@ from enum import Enum
 from typing import List, Optional
 
 from src.candle import Candle
-from src.indicators import ema, atr
+from src.indicators import ema, atr, adx
 from src.backtest_structures import sma
 from src.medfreq_strategy import align_htf_to_m5
 from src.regime_filter import atr_expansion_gate
+
+# Fixed, hardcoded, non-optimized -- per the regime breakdown's actual finding (trending vs.
+# ranging performed almost identically; losses concentrated specifically in this band), not a
+# parameter to search. Module-level constants, not config fields, so there is no way to tune
+# them via LowfreqV2Config without editing source -- deliberate friction matching "hardcode a
+# non-optimized rule."
+ADX_TRANSITION_LOW = 20.0
+ADX_TRANSITION_HIGH = 25.0
+ADX_PERIOD = 14
 
 ATR_PERIOD = 14  # fixed, not tunable -- see module docstring
 
@@ -87,6 +96,12 @@ class LowfreqV2Config:
     # not a new number invented for this round. 1 (the default) means "no persistence
     # requirement," i.e. identical to the prior round's behavior.
     regime_confirm_bars: int = 1
+    # Binary on/off for the D1 ADX 20-25 transitional-band block (ADX_TRANSITION_LOW/HIGH
+    # above) -- the specific, non-arbitrary finding from the regime breakdown (that band is
+    # where losses concentrated, not "ranging" broadly). Not a parameter with a range; a
+    # controlled A/B toggle, same pattern as use_regime_filter. Default False: every existing
+    # caller (including the live paper-trading harness) is unaffected unless explicitly enabled.
+    block_adx_transition: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -97,6 +112,7 @@ class LowfreqV2Config:
             "atr_tp_mult": self.atr_tp_mult,
             "use_regime_filter": self.use_regime_filter,
             "regime_confirm_bars": self.regime_confirm_bars,
+            "block_adx_transition": self.block_adx_transition,
         }
 
 
@@ -138,6 +154,12 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
     daily_closes = [c.close for c in daily_candles]
     daily_sma = sma(daily_closes, config.trend_sma_period)
     trend_on_h1 = align_htf_to_m5(h1_candles, daily_candles, daily_sma, 1440)
+    # Computed unconditionally (cheap) but only consulted when block_adx_transition is True --
+    # same non-disruptive pattern as regime_gate below. D1 ADX, aligned onto H1 with the same
+    # no-lookahead pointer-advance as the daily trend filter above (a trade only ever sees the
+    # most recently CLOSED daily bar's ADX, never a still-forming one).
+    daily_adx = adx(daily_candles, ADX_PERIOD)
+    adx_on_h1 = align_htf_to_m5(h1_candles, daily_candles, daily_adx, 1440)
 
     h1_closes = [c.close for c in h1_candles]
     h1_ema = ema(h1_closes, config.pullback_ema_period)
@@ -209,6 +231,15 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
         # round's exact behavior with no persistence requirement.
         if config.use_regime_filter and regime_streak[i] < config.regime_confirm_bars:
             continue
+
+        # Hardcoded, non-optimized ADX transitional-band block -- entries only, same as the
+        # regime gate above. adx_on_h1[i] is None during warmup; a None fails the range check
+        # below (Python raises on None <= float), so guard it explicitly rather than let a
+        # warmup bar silently behave as "not blocked."
+        if config.block_adx_transition:
+            a_val = adx_on_h1[i]
+            if a_val is None or (ADX_TRANSITION_LOW <= a_val <= ADX_TRANSITION_HIGH):
+                continue
 
         price = c.close
         long_regime = price > trend_sma

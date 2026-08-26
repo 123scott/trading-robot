@@ -1481,3 +1481,96 @@ handful of out-of-sample observations.
    development machine (Windows-only). Validate the connection on real
    Windows/MT5 hardware, on a demo account, before it's anywhere near
    live capital.
+
+## ADX Transition-Band Filter: Locked 2025 IS / 2026 OOS Test, + Paper Trading Daemon
+
+**Scope note before the numbers:** the requested OOS window (2026-01-01 to
+2026-08-04) almost entirely overlaps the already-analyzed flagship holdout
+from the N-bar persistence round above. This is presented honestly as a
+**re-analysis of a recent window**, not a fresh, untainted out-of-sample
+test -- the underlying price action in this period has already informed
+prior decisions in this project.
+
+**What was tested:** a strict, hardcoded, non-optimized entry block --
+`block_adx_transition=True` in `src/entries_v2.py` -- that skips any entry
+when the daily ADX(14), aligned onto the H1 bar with the same no-lookahead
+pointer-advance used for the trend/regime filters, falls in `[20.0, 25.0]`.
+This threshold was **not fit on this data** -- it comes directly from the
+`src/regime_breakdown.py` finding earlier this project (training-only,
+2018-2025-07, 1073 trades): the 20-25 "transitional" ADX band had
+PF 0.885 and expectancy -$3.63/trade, clearly worse than either the
+trending (>25, PF 1.051) or ranging (<20, PF 1.050) buckets. No grid
+search was run here; the persistence filter (`regime_confirm_bars=3`) was
+kept fixed at its already-locked value throughout.
+
+| Period | Config | Trades | Win % | PF | Sharpe | Max DD % | Net P&L % |
+|---|---|---|---|---|---|---|---|
+| 2025 IS | ADX block **ON** | 141 | 47.5 | 1.063 | -0.167 | 11.01 | +3.30 |
+| 2025 IS | ADX block OFF | 161 | 48.4 | 1.095 | +0.071 | 12.43 | +5.63 |
+| 2026 OOS (locked) | ADX block **ON** | 61 | 57.4 | 1.579 | +1.749 | 4.63 | +18.60 |
+| 2026 OOS (locked) | ADX block OFF | 67 | 56.7 | 1.536 | +1.731 | 4.79 | +18.92 |
+
+**Honest read:** on this specific, short, recent window the ADX-transition
+block does **not** replicate the clear benefit seen in the full 7.5-year
+regime breakdown. On the 2025 IS portion it's mildly counterproductive --
+worse PF, worse Sharpe, worse net P&L, only fewer trades and a slightly
+lower drawdown to show for it. On the 2026 OOS portion it's roughly
+neutral -- marginally better PF and Sharpe, marginally lower net P&L,
+none of the differences large relative to a 61-67 trade sample. The most
+plausible explanation is sample size: 141+61=202 trades here vs. 1073 in
+the original breakdown, too few for a real ~$5/trade effect to reliably
+separate from noise. **Conclusion: the filter is not being adopted as a
+default.** It stays available as an opt-in config field
+(`block_adx_transition`, default `False`) for future testing on a larger
+sample, but the paper-trading daemon below runs without it.
+
+### Headless paper-trading daemon
+
+`scripts/run_paper_daemon.py` -- a production-hardened wrapper around the
+same proven `entries_v2.simulate()` engine and `DEFAULT_COSTS` cost model
+(spread=$0.40, slippage=$0.05/side, already exactly matching the task's
+mandatory assumption, not reimplemented). Defaults to the flagship config
+validated over the full history (`use_regime_filter=True,
+regime_confirm_bars=3, block_adx_transition=False`) rather than the
+ADX-block variant just tested, since that variant showed no clear benefit
+on recent data above.
+
+Adds, on top of the already-proven strategy logic:
+- Async main loop polling real Deriv H1/daily candles, with exponential
+  backoff + jitter on any fetch failure (network drop, Deriv 503,
+  subscription rejection) -- verified this round: initial live smoke test
+  against real Deriv data closed 6 real trades correctly and computed a
+  real running PF/win-rate/net P&L from them.
+- `data/paper_state.json` -- persists last-seen trade time, full trade
+  log, equity curve, and running metrics, so a restart resumes cleanly
+  instead of reprocessing. Verified this round: killed and relaunched the
+  process after 6 trades were logged; the reload correctly found the same
+  `last_seen_open_time_ms` and logged zero duplicate trades.
+  Atomic write (`os.replace` from a `.tmp` file) so a crash mid-write
+  never leaves a truncated state file.
+- `logs/paper_trader.log` -- stdlib `logging` with
+  `TimedRotatingFileHandler` (daily rotation, 30-day retention), plus a
+  stdout stream handler so `nohup` output is also visible.
+  Verified this round: real log lines with real trade fills confirmed
+  written to disk during the smoke test above.
+- SIGTERM/SIGINT handled via `asyncio` signal handlers -- state is saved
+  after every successful poll, so `kill -15` is always safe (never needs
+  `kill -9`).
+- Best-effort live-quote enrichment (`sample_current_spread`) attached to
+  each newly-closed trade's log entry for telemetry only -- fill price
+  and PnL always come from `simulate()`'s own cost-model math, never from
+  the live quote. This degrades gracefully: Deriv's tick-subscribe
+  endpoint is still rejecting `frxXAUUSD` as of this session (see prior
+  round), so this enrichment silently returns `None` right now and that's
+  expected, not a bug.
+
+**Operating it:**
+```
+nohup python3 -u scripts/run_paper_daemon.py > logs/nohup_paper.log 2>&1 &
+tail -f logs/paper_trader.log
+ps aux | grep run_paper_daemon.py
+kill -15 <PID>
+```
+
+Places no real orders and requires no broker credentials -- purely a
+simulated-fill logger against real live/historical market data.
