@@ -37,12 +37,16 @@ from typing import AsyncIterator, Callable, List, Optional
 
 import certifi
 import websockets
+from dotenv import load_dotenv
 
 from src.candle import Candle
 
+load_dotenv()  # picks up .env (gitignored) if present -- same convention as src/mt5_executor.py
+
 # Overridable via env var so a user who registers their OWN Deriv app_id (the
 # real fix for the tick-subscription entitlement issue documented below) can
-# switch to it without touching code: DERIV_APP_ID=123456 python3 ...
+# switch to it without touching code: set DERIV_APP_ID in .env, or
+# DERIV_APP_ID=123456 python3 ...
 DERIV_APP_ID = os.environ.get("DERIV_APP_ID", "1089")
 DERIV_WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
 DERIV_SYMBOLS = {"XAUUSD_DERIV": "frxXAUUSD"}
