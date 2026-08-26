@@ -91,8 +91,14 @@ void OnTimer()
    string json  = request.getData();
    string reply = HandleRequest(json);
 
+   // A REP socket must send exactly one reply per recv to stay in its expected
+   // send/recv rotation -- if the peer (the Python bridge) has already given up and
+   // reconnected with a fresh REQ socket, this send can fail. Log and move on rather
+   // than letting that stop the timer loop; the next recv() picks up the new peer's
+   // next request normally either way.
    ZmqMsg response(reply);
-   repSocket.send(response);
+   if(!repSocket.send(response))
+      Print("AmaroZmqBridge: WARNING -- reply send failed for cmd, peer may have disconnected; continuing.");
   }
 
 //+------------------------------------------------------------------+

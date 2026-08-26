@@ -56,7 +56,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src import market_data
-from src.data_deriv import stream_deriv_ticks, deriv_ticker, fetch_deriv_candles_async
+from src.data_deriv import stream_deriv_ticks_resilient, deriv_ticker, fetch_deriv_candles_async
 from src.backtest_structures import detect_crossovers
 from src.backtest_entries import Action, PositionTracker
 from src import memory
@@ -79,35 +79,21 @@ def _log_paper_trade(symbol: str, action: str, price: float, quantity: float,
         csv.writer(f).writerow([ts, symbol, action, f"{price:.5f}", quantity, reason, "paper", outcome, f"{pnl:.2f}"])
 
 
-RECONNECT_BASE_DELAY = 2.0
-RECONNECT_MAX_DELAY = 60.0
-
-
-async def _run_stream_with_reconnect(ticker: str, on_tick, stop_event: asyncio.Event, log) -> None:
+async def _run_stream_with_reconnect(symbol: str, on_tick, stop_event: asyncio.Event, log) -> None:
     """
-    Wraps stream_deriv_ticks with reconnect-on-drop + exponential backoff
-    (capped, with jitter), so a dropped WebSocket (keepalive timeout,
-    network blip, etc. -- a real failure observed in testing) doesn't kill
-    the whole monitoring process. All strategy/position state lives in the
-    caller's closure via `on_tick`, so it survives a reconnect untouched.
+    Thin logging shim around data_deriv.stream_deriv_ticks_resilient, which now
+    owns the actual reconnect-with-backoff, dynamic-symbol-fallback, and
+    bounded-attempts logic (previously duplicated here with no attempt limit --
+    that meant a permanent rejection like InvalidSymbol would retry forever
+    instead of surfacing clearly; see stream_deriv_ticks_resilient's docstring
+    for the confirmed current Deriv entitlement issue this now handles
+    correctly by giving up instead of spinning silently).
     """
-    import random
-
-    attempt = 0
-    while not stop_event.is_set():
-        try:
-            await stream_deriv_ticks(ticker, on_tick, stop_event)
-            return  # stream_deriv_ticks only returns normally once stop_event is set
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            if stop_event.is_set():
-                return
-            attempt += 1
-            delay = min(RECONNECT_MAX_DELAY, RECONNECT_BASE_DELAY * (2 ** (attempt - 1)))
-            delay *= 0.8 + 0.4 * random.random()  # +/-20% jitter to avoid thundering-herd reconnects
-            log(f"[PAPER MODE] Connection dropped ({type(e).__name__}: {e}). Reconnecting in {delay:.1f}s (attempt {attempt})...")
-            await asyncio.sleep(delay)
+    try:
+        await stream_deriv_ticks_resilient(symbol, on_tick, stop_event)
+    except Exception as e:
+        log(f"[PAPER MODE] Live stream permanently failed: {type(e).__name__}: {e}")
+        raise
 
 
 async def run_paper_mode(symbol: str = "XAUUSD_DERIV", notional: float = 10_000.0,
@@ -228,7 +214,7 @@ async def _run_deriv_stream_mode(symbol: str, notional: float, seed_candles: int
         if max_seconds is not None and (time.monotonic() - start_time) >= max_seconds:
             stop_event.set()
 
-    stream_task = asyncio.create_task(_run_stream_with_reconnect(ticker, on_tick, stop_event, log))
+    stream_task = asyncio.create_task(_run_stream_with_reconnect(symbol, on_tick, stop_event, log))
     if max_seconds is not None:
         async def _timer():
             await asyncio.sleep(max_seconds)
@@ -346,8 +332,18 @@ def _cli() -> None:
                          help="Yahoo-sourced symbols only: how often to check for a new daily bar (ignored for Deriv).")
     args = parser.parse_args()
 
-    asyncio.run(run_paper_mode(symbol=args.symbol, notional=args.notional, max_seconds=args.max_seconds,
-                                poll_seconds=args.poll_seconds))
+    try:
+        asyncio.run(run_paper_mode(symbol=args.symbol, notional=args.notional, max_seconds=args.max_seconds,
+                                    poll_seconds=args.poll_seconds))
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        # A live stream failure is now bounded (see stream_deriv_ticks_resilient) rather than
+        # retrying forever -- that means it CAN reach here on a genuine permanent rejection.
+        # Exit with a clean diagnostic instead of a raw traceback; the process still stops
+        # either way, this only changes what the operator sees.
+        print(f"\n[PAPER MODE] Stopped: {type(e).__name__}: {e}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

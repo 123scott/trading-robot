@@ -132,6 +132,17 @@ _timeout_ms: int = DEFAULT_TIMEOUT_MS
 
 _TIMEFRAME_MAP = {"M1": "M1", "M5": "M5", "M15": "M15", "H1": "H1", "H4": "H4", "D1": "D1"}
 
+# Commands safe to silently retry after a dropped/slow connection -- all pure reads, no
+# side effects, so repeating one after a timeout can never place or duplicate an order.
+# ORDER and CLOSE are deliberately EXCLUDED: if a timeout happens after the EA already
+# executed the trade but before its reply made it back, blindly resending would risk a
+# second real order/close on the account. Those two always fail fast on the first drop
+# and leave recovery (checking POSITIONS to see what actually happened) to the caller,
+# same as before this change.
+_RETRYABLE_CMDS = {"PING", "SYMBOL_INFO", "RATES", "TICK", "POSITIONS"}
+_MAX_RETRIES = 2
+_RETRY_BASE_DELAY = 0.5
+
 
 def _new_socket() -> "zmq.Socket":
     sock = _context.socket(zmq.REQ)
@@ -142,26 +153,53 @@ def _new_socket() -> "zmq.Socket":
     return sock
 
 
-def _send(payload: dict) -> dict:
+def _send_once(payload: dict) -> dict:
+    """Single attempt, no retry. Raises BridgeTimeoutError on any socket-level failure
+    (timeout, or a broader ZMQError from e.g. the peer resetting the connection --
+    both handled identically: discard the wedged REQ socket and reconnect fresh, since
+    a REQ socket that hasn't completed its send/recv cycle can't be reused as-is)."""
     global _socket
     if _socket is None:
         raise BridgeNotConnectedError("Not connected -- call connect() first.")
     try:
         _socket.send_json(payload)
         resp = _socket.recv_json()
-    except zmq.error.Again:
-        # A REQ socket that times out is stuck until it gets its matching reply --
-        # the only clean recovery is to discard it and reconnect fresh.
+    except (zmq.error.Again, zmq.error.ZMQError) as e:
         _socket.close(0)
         _socket = _new_socket()
+        detail = "timed out" if isinstance(e, zmq.error.Again) else f"socket error ({e})"
         raise BridgeTimeoutError(
-            f"No response from the MT5 EA within {_timeout_ms}ms (cmd={payload.get('cmd')}). "
+            f"No response from the MT5 EA within {_timeout_ms}ms, {detail} (cmd={payload.get('cmd')}). "
             "Is AmaroZmqBridge.mq5 attached to a chart, running (smiley face, AutoTrading "
-            "enabled), and bound to the same host/port?"
+            "enabled), and bound to the same host/port? This can also mean real execution "
+            "latency on the broker side exceeded the timeout -- see DEFAULT_TIMEOUT_MS."
         )
     if not resp.get("ok", False):
         raise BridgeError(f"EA reported an error for {payload.get('cmd')}: {resp.get('error')}")
     return resp
+
+
+def _send(payload: dict) -> dict:
+    """
+    Dispatches through _send_once, adding a bounded retry (network hiccups, transient EA
+    poll-timing misses) ONLY for read-only commands in _RETRYABLE_CMDS. ORDER/CLOSE always
+    take the single-attempt path -- see _RETRYABLE_CMDS' comment for why.
+    """
+    import time
+
+    cmd = payload.get("cmd")
+    if cmd not in _RETRYABLE_CMDS:
+        return _send_once(payload)
+
+    last_err: Optional[BridgeTimeoutError] = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return _send_once(payload)
+        except BridgeTimeoutError as e:
+            last_err = e
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_BASE_DELAY * (2 ** attempt))
+    raise last_err
 
 
 def connect(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict:

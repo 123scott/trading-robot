@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from src import memory
-from src.data_deriv import sample_current_spread, deriv_ticker, DerivApiError
+from src.data_deriv import sample_current_spread_resilient, deriv_ticker
 
 TELEMETRY_LOG_PATH = os.path.join(memory.DATA_DIR, "spread_telemetry.csv")
 TELEMETRY_HEADER = ["timestamp", "symbol", "observed_bid", "observed_ask", "observed_spread",
@@ -72,16 +72,19 @@ async def run(symbol: str = "XAUUSD_DERIV", poll_seconds: float = 300.0,
     iteration = 0
     while max_iterations is None or iteration < max_iterations:
         iteration += 1
-        try:
-            sample = await sample_current_spread(ticker)
+        # sample_current_spread_resilient already retries transient failures and tries a
+        # dynamic-symbol fallback on a permanent rejection internally -- a None return here
+        # means all of that was exhausted this poll, not a single bare failure.
+        sample = await sample_current_spread_resilient(symbol)
+        if sample is not None:
             log_sample(symbol, sample)
             delta = sample["spread"] - ASSUMED_SPREAD
             log(f"[SPREAD TELEMETRY] bid={sample['bid']:.5f} ask={sample['ask']:.5f} "
                 f"observed_spread=${sample['spread']:.5f} (assumed ${ASSUMED_SPREAD:.2f}, "
                 f"delta {delta:+.5f})")
-        except (DerivApiError, asyncio.TimeoutError, OSError) as e:
-            log(f"[SPREAD TELEMETRY] Sample failed ({type(e).__name__}: {e}) -- logging nothing "
-                f"(never fabricating a spread value), will retry next poll.")
+        else:
+            log(f"[SPREAD TELEMETRY] Sample failed after retries + dynamic-symbol fallback -- "
+                f"logging nothing (never fabricating a spread value), will retry next poll.")
         if max_iterations is None or iteration < max_iterations:
             await asyncio.sleep(poll_seconds)
     log("[SPREAD TELEMETRY] Stopped.")

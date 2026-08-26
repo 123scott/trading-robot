@@ -9,3 +9,4 @@ BOTTOOO.odt
 .env.*
 !.env.example
 *.log
+data/paper_state.json

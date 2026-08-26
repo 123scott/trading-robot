@@ -61,7 +61,7 @@ from typing import Optional
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))  # so `python3 scripts/run_paper_daemon.py` finds the src package
 
-from src.data_deriv import fetch_deriv_candles_async, sample_current_spread, deriv_ticker, DerivApiError
+from src.data_deriv import fetch_deriv_candles_async, sample_current_spread_resilient, DerivApiError
 from src.entries_v2 import LowfreqV2Config, simulate, compute_metrics, DEFAULT_COSTS
 
 LOG_DIR = REPO_ROOT / "logs"
@@ -155,11 +155,10 @@ async def poll_once(symbol: str, notional: float, config: LowfreqV2Config, state
     # PnL, which already come from simulate()'s own cost-model math. Confirmed as of this
     # session that Deriv's tick-subscribe endpoint is currently rejecting frxXAUUSD -- this is
     # expected to fail right now and that's fine, it's explicitly best-effort.
-    quote = None
-    try:
-        quote = await asyncio.wait_for(sample_current_spread(deriv_ticker(symbol)), timeout=8.0)
-    except Exception as e:
-        log.debug(f"Live-quote enrichment unavailable this poll ({type(e).__name__}: {e}) -- telemetry-only, continuing.")
+    # Resilient sampler already retries transient failures and tries a dynamic-symbol
+    # fallback internally, returning None (never raising) once that's exhausted -- so this
+    # stays purely best-effort with no try/except needed here.
+    quote = await sample_current_spread_resilient(symbol, max_attempts=2)
 
     for t in sorted(new_trades, key=lambda t: t.exit_time):
         state["trades"].append({
