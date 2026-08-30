@@ -1574,3 +1574,114 @@ kill -15 <PID>
 
 Places no real orders and requires no broker credentials -- purely a
 simulated-fill logger against real live/historical market data.
+
+## Keep-Alive Infrastructure, Deriv Re-Check, Regime-Parameter WFO Search (2026-08-30)
+
+### Part 1: Process persistence (caffeinate + LaunchAgent)
+
+Root cause of the 2026-08-27 outage: `nohup` protects a background process
+from the controlling terminal closing, but does nothing about the system
+going to sleep or rebooting -- consistent with the log simply stopping
+mid-stream (no crash trace, no graceful-shutdown line) right around when
+`uptime` showed the machine had rebooted.
+
+Fix, installed and verified running this round:
+- `scripts/run_paper_daemon_launchd.sh` -- wraps the daemon in
+  `caffeinate -i` (prevent idle sleep, including on battery -- `-i` not
+  `-s`, since `-s` only asserts on AC power) with absolute paths (launchd
+  doesn't run through a login shell, so PATH/venv-activation can't be
+  relied on).
+- `scripts/com.amaro.paperdaemon.plist`, installed to
+  `~/Library/LaunchAgents/` and loaded via `launchctl bootstrap` --
+  `RunAtLoad` (starts on login/reboot) + `KeepAlive` (restarts on any
+  crash) + `ThrottleInterval=30` (prevents a crash-loop from spinning).
+  `StandardOutPath`/`StandardErrorPath` point at
+  `logs/launchd_stdout.log`/`launchd_stderr.log` for launchd-level
+  diagnostics separate from the app's own daily-rotating
+  `logs/paper_trader.log`.
+
+Verified live: `launchctl list | grep amaro` shows it loaded and running,
+`ps aux` shows both the daemon and its `caffeinate` wrapper alive, and both
+log files show a clean startup with real trade activity. One real bug
+caught before deploying: the wrapper script's `REPO_ROOT` used a straight
+apostrophe where the actual folder name uses a curly one (`admin's` vs.
+`admin’s`) -- would have pointed at a nonexistent path. Fixed and
+re-verified.
+
+To stop permanently: `launchctl bootout gui/$(id -u)/com.amaro.paperdaemon`
+and remove `~/Library/LaunchAgents/com.amaro.paperdaemon.plist`.
+
+### Part 2: Deriv app_id -- unchanged, still gated on a real registration
+
+Re-tested live this round (2026-08-30): historical candles still fetch
+fine; `active_symbols` still returns 0 symbols; live tick sampling still
+fails after retries. Identical to every check since 2026-08-26. No code
+gap remains here -- `DERIV_APP_ID` is env-configurable via `.env`
+(`load_dotenv()` wired into `src/data_deriv.py`) and every fallback/retry
+path is already in place; this is purely gated on obtaining a real,
+numeric, dashboard-registered app_id (steps documented earlier this week).
+Two candidate values offered this week were tested directly against the
+live API and both failed -- one as an app_id (HTTP 401 at the WebSocket
+handshake) and as an API token (`InvalidToken`). Also researched and
+disproved this week: a claim that Deriv changed the app_id format to
+alphanumeric or that `active_symbols` no longer requires an app_id --
+neither held up against current documentation or live testing (a
+connection with `app_id` omitted or blank is rejected with HTTP 401,
+identically to before).
+
+### Part 3/4: Regime-parameter walk-forward search (`src/lowfreq_v2_regime_search.py`)
+
+New, small, staged grid search on top of the already-locked structural
+params (`trend_sma_period=50, pullback_ema_period=21,
+pullback_tolerance_pct=0.20, atr_sl_mult=2.0, atr_tp_mult=2.5` -- from
+`lowfreq_v2_eval.py`'s own earlier 48-combo search, held fixed rather than
+re-derived, since the underlying pre-2025-08-01 training data hasn't
+changed). Searched `regime_confirm_bars` in [1..5] x `block_adx_transition`
+in [False, True] (10 combos) using the same 26 purged/embargoed 12mo-context
+/3mo-validate rolling folds inside 2018-01-01 to 2025-07-31 -- training
+only, test window never touched during selection.
+
+**Training result: every one of the 10 combos scored a NEGATIVE median
+fold Sharpe** (best -0.103 at confirm_bars=2/adx_block=True, worst -0.602).
+The winner passed a cliff/stability check (its confirm_bars neighbors don't
+collapse), but "not cliff-sensitive" here means "consistently weak," not
+"consistently good" -- there is no genuine positive training signal for
+any candidate in this search.
+
+**Single evaluation on the test window (2025-08-01 to 2026-07-31)** --
+flagged loudly before running, and again here: this window has now been
+analyzed in three separate rounds of this project (the original
+persistence-filter discovery, the 2025/2026 ADX-transition round, and now
+this search), so it is a repeatedly-revisited window, not a fresh holdout.
+Result for the selected combo:
+
+| Metric | Value |
+|---|---|
+| Trades | 128 |
+| Win rate | 57.0% (target >= 56%) |
+| Profit factor | 1.550 |
+| Sharpe | 1.831 (target >= 1.5) |
+| Max drawdown | 5.52% |
+| Net P&L | +30.87% |
+| Bootstrap Monte Carlo (2000 iter) 95% net P&L CI | [+1.36%, +59.68%] |
+| P(loss) across resamples | 2.1% |
+| One-sample t-test vs. 0 | t=2.145, p=0.0338 |
+
+**Both stated targets are technically cleared. This is NOT being adopted
+as the new default, and the live daemon has not been reconfigured.**
+Reasons: (1) the training search behind this candidate found no positive
+signal for any of the 10 variants tested -- this one wasn't chosen for
+demonstrated edge, it was the least-negative of a weak field; (2) real
+XAUUSD price data confirms gold rallied +20.3% over this exact window
+(2025-08-01 close $3363 -> 2026-07-31 close $4047, intraday high $5598) --
+a trend-following/pullback strategy profits from a move like that almost
+irrespective of which near-identical regime-filter setting is active,
+which is consistent with weak-everywhere-except-this-one-strongly-trending-
+year rather than genuine parameter-specific edge; (3) this is the third
+time this specific window has been used to evaluate a candidate in this
+project -- each additional look raises the odds that some configuration
+clears an arbitrary bar by chance alone, and p=0.0338 is only marginally
+under 0.05 even before accounting for that. The currently-deployed
+flagship config (`regime_confirm_bars=3, block_adx_transition=False`)
+remains in place, unchanged, per the explicit anti-overfitting instruction
+this round was run under.

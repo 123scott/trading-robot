@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.amaro.paperdaemon</string>
+
+    <!-- Runs the daemon under caffeinate (see run_paper_daemon_launchd.sh) so
+         idle sleep can't silently pause/kill it, matching the root cause of the
+         2026-08-27 outage (machine slept/rebooted, nohup alone didn't survive it). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/admin/Desktop - admin’s MacBook Pro/AMARO/scripts/run_paper_daemon_launchd.sh</string>
+    </array>
+
+    <!-- Starts the daemon the moment this LaunchAgent is loaded, AND on every
+         subsequent login (launchd loads a user's LaunchAgents at login automatically
+         once installed in ~/Library/LaunchAgents/) -- covers the "reboot" half of
+         the outage; KeepAlive covers the "crashed/killed while awake" half. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restarts the daemon automatically if it ever exits for any reason (crash,
+         an unhandled exception past its own internal recovery, accidentally killed
+         with -9 instead of -15, etc.) -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Minimum seconds between restart attempts, so a fast crash-loop (e.g. a
+         genuine bug that exits immediately every time) doesn't spin CPU/spam
+         hundreds of restarts per minute -- gives a human time to notice via the
+         log growing instead. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/admin/Desktop - admin’s MacBook Pro/AMARO</string>
+
+    <!-- launchd's OWN view of stdout/stderr -- separate from the app's own
+         daily-rotating logs/paper_trader.log. Mainly useful for diagnosing
+         problems the daemon's own logger never gets to run for (e.g. the venv
+         python being missing, a permissions error, a syntax error on startup). -->
+    <key>StandardOutPath</key>
+    <string>/Users/admin/Desktop - admin’s MacBook Pro/AMARO/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/admin/Desktop - admin’s MacBook Pro/AMARO/logs/launchd_stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
