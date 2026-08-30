@@ -1,0 +1,19 @@
+2026-08-26 02:33:22 INFO    Starting paper daemon: symbol=XAUUSD_DERIV notional=10000.0 poll_seconds=1800.0
+2026-08-26 02:33:22 INFO    Config: {'trend_sma_period': 50, 'pullback_ema_period': 21, 'pullback_tolerance_pct': 0.2, 'atr_sl_mult': 2.0, 'atr_tp_mult': 2.5, 'use_regime_filter': True, 'regime_confirm_bars': 3, 'block_adx_transition': False}
+2026-08-26 02:33:22 INFO    Cost model: spread=$0.40, slippage=$0.05/side (mandatory, per task spec)
+2026-08-26 02:33:24 INFO    NEW closed trade: short 2026-07-30 @ 4045.86 -> 2026-07-30 @ 4089.71 (SL), pnl -108.38
+2026-08-26 02:33:24 INFO    NEW closed trade: short 2026-07-31 @ 4084.26 -> 2026-07-31 @ 4037.96 (TP), pnl +113.36
+2026-08-26 02:33:24 INFO    NEW closed trade: long 2026-08-06 @ 4263.73 -> 2026-08-06 @ 4225.48 (SL), pnl -89.72
+2026-08-26 02:33:24 INFO    NEW closed trade: long 2026-08-12 @ 4421.50 -> 2026-08-13 @ 4383.58 (SL), pnl -85.77
+2026-08-26 02:33:24 INFO    NEW closed trade: long 2026-08-20 @ 4481.84 -> 2026-08-20 @ 4525.82 (TP), pnl +98.14
+2026-08-26 02:33:24 INFO    NEW closed trade: long 2026-08-24 @ 4649.58 -> 2026-08-25 @ 4606.32 (SL), pnl -93.03
+2026-08-26 02:33:24 INFO    Running: n=6 win%=33.3 pf=0.56 net%=-1.65
+2026-08-26 03:08:20 INFO    Poll complete: no newly-closed trades.
+2026-08-26 04:37:13 INFO    Poll complete: no newly-closed trades.
+2026-08-26 10:14:09 INFO    Poll complete: no newly-closed trades.
+2026-08-26 11:07:24 INFO    Poll complete: no newly-closed trades.
+2026-08-26 11:37:27 INFO    Poll complete: no newly-closed trades.
+2026-08-26 15:56:43 INFO    NEW closed trade: long 2026-08-25 @ 4643.72 -> 2026-08-26 @ 4602.43 (SL), pnl -88.92
+2026-08-26 15:56:43 INFO    Running: n=7 win%=28.6 pf=0.45 net%=-2.54
+2026-08-26 19:45:48 INFO    Poll complete: no newly-closed trades.
+2026-08-27 00:27:33 INFO    Poll complete: no newly-closed trades.
