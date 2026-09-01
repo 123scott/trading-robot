@@ -58,11 +58,12 @@ from src.backtest_structures import sma
 from src.medfreq_strategy import align_htf_to_m5
 from src.regime_filter import atr_expansion_gate
 
-# Fixed, hardcoded, non-optimized -- per the regime breakdown's actual finding (trending vs.
-# ranging performed almost identically; losses concentrated specifically in this band), not a
-# parameter to search. Module-level constants, not config fields, so there is no way to tune
-# them via LowfreqV2Config without editing source -- deliberate friction matching "hardcode a
-# non-optimized rule."
+# Original, non-optimized finding from the regime breakdown (trending vs. ranging performed
+# almost identically; losses concentrated specifically in this band). Kept as the DEFAULT
+# values for LowfreqV2Config.adx_transition_low/high (added 2026-08-31 so a search can sweep
+# nearby bands rather than only toggling this exact one on/off) -- these module constants are
+# no longer the only way to set the band, but they remain what block_adx_transition uses
+# unless a config explicitly overrides them.
 ADX_TRANSITION_LOW = 20.0
 ADX_TRANSITION_HIGH = 25.0
 ADX_PERIOD = 14
@@ -110,6 +111,25 @@ class LowfreqV2Config:
     # ones) is completely unaffected unless these are explicitly overridden.
     adx_transition_low: float = ADX_TRANSITION_LOW
     adx_transition_high: float = ADX_TRANSITION_HIGH
+    # STRUCTURAL improvement #1 (2026-09-01 core-edge round): requires the WEEKLY trend
+    # (price vs. a weekly SMA) to agree with the existing daily trend direction before an
+    # entry is allowed -- a genuine multi-timeframe-alignment concept (only take the daily
+    # pullback setup when the higher-order weekly trend agrees), structurally distinct from
+    # the ADX regime filter above (which measures trend STRENGTH/volatility expansion, not
+    # cross-timeframe DIRECTIONAL agreement). Default False: no existing caller is affected.
+    require_weekly_trend_alignment: bool = False
+    weekly_trend_sma_period: int = 10  # ~10 weeks, matching trend_sma_period=50 trading days in spirit
+    # STRUCTURAL improvement #2: scales the ATR take-profit multiple by the CURRENT
+    # volatility regime instead of a single fixed atr_tp_mult -- lets winners run further
+    # when ATR is running hot relative to its own recent baseline (trends have more room to
+    # extend), tightens expectations when ATR is compressed (limited follow-through is more
+    # likely). The two scale factors are hardcoded, non-optimized constants (same "hardcode
+    # a non-optimized rule" discipline already used for the ADX band's original 20-25
+    # finding) -- not free parameters to search, to avoid adding curve-fitting surface area
+    # while testing whether the underlying MECHANISM helps at all. Default False: no
+    # existing caller is affected.
+    dynamic_atr_tp: bool = False
+    atr_baseline_period: int = 100
 
     def as_dict(self) -> dict:
         return {
@@ -123,7 +143,40 @@ class LowfreqV2Config:
             "block_adx_transition": self.block_adx_transition,
             "adx_transition_low": self.adx_transition_low,
             "adx_transition_high": self.adx_transition_high,
+            "require_weekly_trend_alignment": self.require_weekly_trend_alignment,
+            "weekly_trend_sma_period": self.weekly_trend_sma_period,
+            "dynamic_atr_tp": self.dynamic_atr_tp,
+            "atr_baseline_period": self.atr_baseline_period,
         }
+
+
+# Hardcoded, non-optimized scale factors for dynamic_atr_tp -- see the config field's
+# docstring for why these are constants, not tunable parameters.
+ATR_HOT_THRESHOLD = 1.2      # current ATR this far above its baseline SMA counts as "hot"
+ATR_HOT_TP_SCALE = 1.3       # extend the TP multiple by this much when hot
+ATR_COLD_THRESHOLD = 0.8     # current ATR this far below its baseline SMA counts as "cold"
+ATR_COLD_TP_SCALE = 0.85     # tighten the TP multiple by this much when cold
+
+
+def _resample_daily_to_weekly(daily_candles: List[Candle]) -> List[Candle]:
+    """Groups daily candles into Monday-start ISO weeks. Used only for
+    require_weekly_trend_alignment -- data_dukascopy.resample() is a pure
+    intraday-bucket resampler (minute-of-day only) and can't express a
+    multi-day period like a week, so this is a small dedicated helper
+    rather than a misuse of that function."""
+    from datetime import timedelta
+    buckets: dict = {}
+    for c in daily_candles:
+        dt = datetime.fromtimestamp(c.open_time / 1000, tz=timezone.utc)
+        monday = (dt - timedelta(days=dt.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        buckets.setdefault(monday, []).append(c)
+    out = []
+    for key in sorted(buckets):
+        group = sorted(buckets[key], key=lambda c: c.open_time)
+        out.append(Candle(open_time=int(key.timestamp() * 1000), open=group[0].open,
+                           high=max(c.high for c in group), low=min(c.low for c in group),
+                           close=group[-1].close, volume=sum(c.volume for c in group)))
+    return out
 
 
 @dataclass
@@ -171,9 +224,23 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
     daily_adx = adx(daily_candles, ADX_PERIOD)
     adx_on_h1 = align_htf_to_m5(h1_candles, daily_candles, daily_adx, 1440)
 
+    # Structural improvement #1: weekly trend, computed unconditionally (cheap) but only
+    # consulted when require_weekly_trend_alignment is True.
+    weekly_candles = _resample_daily_to_weekly(daily_candles)
+    weekly_closes = [c.close for c in weekly_candles]
+    weekly_sma = sma(weekly_closes, config.weekly_trend_sma_period)
+    weekly_trend_on_h1 = align_htf_to_m5(h1_candles, weekly_candles, weekly_sma, 7 * 1440)
+
     h1_closes = [c.close for c in h1_candles]
     h1_ema = ema(h1_closes, config.pullback_ema_period)
     atr_vals = atr(h1_candles, ATR_PERIOD)
+    # Structural improvement #2: rolling ATR baseline for dynamic_atr_tp. sma() can't take
+    # None inputs, so the leading warmup Nones are substituted with 0.0 purely for this
+    # calculation -- negligibly distorts the baseline for the first ~atr_baseline_period
+    # bars of the entire multi-year dataset (a one-time startup transient), never touched
+    # in practice since dynamic_atr_tp is also gated on atr_vals[i] being non-None below.
+    atr_for_baseline = [v if v is not None else 0.0 for v in atr_vals]
+    atr_baseline = sma(atr_for_baseline, config.atr_baseline_period)
     tol = config.pullback_tolerance_pct / 100.0
     # Computed unconditionally (cheap, single pass) but only ever consulted below when
     # use_regime_filter is True -- entry/exit behavior is unchanged from before this
@@ -255,6 +322,19 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
         long_regime = price > trend_sma
         short_regime = price < trend_sma
 
+        # Structural improvement #1: weekly trend must AGREE with the daily trend direction
+        # before an entry is allowed. weekly_trend_on_h1[i] is None until the first weekly
+        # bar has closed (~weekly_trend_sma_period weeks in) -- treated as "not aligned"
+        # (blocks entry) rather than silently passing, same convention as the ADX-band guard.
+        if config.require_weekly_trend_alignment:
+            w = weekly_trend_on_h1[i]
+            if w is None:
+                continue
+            if long_regime and not (price > w):
+                long_regime = False
+            if short_regime and not (price < w):
+                short_regime = False
+
         # Single pullback-to-EMA-and-bounce setup, mirrored for both regimes.
         long_trigger = long_regime and c.low <= e * (1 + tol) and c.close > e
         short_trigger = short_regime and c.high >= e * (1 - tol) and c.close < e
@@ -267,7 +347,17 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
         fill = (price + spread_adj) if direction == Direction.LONG else (price - spread_adj)
         qty = notional / fill
         sl = (fill - config.atr_sl_mult * a) if direction == Direction.LONG else (fill + config.atr_sl_mult * a)
-        tp = (fill + config.atr_tp_mult * a) if direction == Direction.LONG else (fill - config.atr_tp_mult * a)
+
+        # Structural improvement #2: scale the TP multiple by the current volatility regime
+        # (see ATR_HOT_*/ATR_COLD_* constants) instead of always using the fixed atr_tp_mult.
+        tp_mult = config.atr_tp_mult
+        if config.dynamic_atr_tp and atr_baseline[i] is not None and atr_baseline[i] > 0:
+            ratio = a / atr_baseline[i]
+            if ratio >= ATR_HOT_THRESHOLD:
+                tp_mult = config.atr_tp_mult * ATR_HOT_TP_SCALE
+            elif ratio <= ATR_COLD_THRESHOLD:
+                tp_mult = config.atr_tp_mult * ATR_COLD_TP_SCALE
+        tp = (fill + tp_mult * a) if direction == Direction.LONG else (fill - tp_mult * a)
 
         position = {"direction": direction, "entry_price": fill, "sl": sl, "tp": tp, "entry_time": t, "qty": qty}
 

@@ -1742,3 +1742,102 @@ overturns, the prior conclusion that the earlier round's apparent win was
 most likely the test window's own strong trending regime, not
 parameter-specific edge. The live daemon's config remains unchanged
 (`regime_confirm_bars=3, block_adx_transition=False`).
+
+## Core Edge Diagnostic & Structural Re-Engineering (2026-09-01)
+
+### Step 1: Raw baseline diagnostic
+
+Stripped `entries_v2`'s core trend+pullback trigger of both post-entry
+filters (`use_regime_filter=False`, `block_adx_transition=False`) and ran it
+across all 26 purged training folds (2018-01-01 to 2025-07-31), pooling
+trades across every fold's validate window:
+
+| Metric | Value |
+|---|---|
+| Median fold Sharpe | -0.466 |
+| Pooled trades | 1850 |
+| Pooled win rate | 44.1% |
+| Pooled profit factor | 0.989 |
+| Pooled net P&L | -6.02% |
+| Pooled max drawdown | 33.40% |
+
+**Explicit answer: the core trigger has NO inherent statistical edge on its
+own.** PF 0.989 is essentially coin-flip-before-costs; the strategy loses
+money and carries far worse drawdown (33.4% vs. the deployed flagship's
+~11%) without the regime/persistence filter. This reframes the project's
+central finding: the regime filter isn't a marginal enhancement, it's what
+keeps the strategy from being a net loser -- the entry signal itself
+carries no measurable directional edge.
+
+### Step 2: Structural re-engineering (two real changes, not filters)
+
+Added two genuinely structural (not filter-layer) changes to
+`entries_v2.py`, both off-by-default config fields:
+
+- **`require_weekly_trend_alignment`**: requires the WEEKLY trend (price
+  vs. a weekly SMA) to agree with the existing daily trend direction before
+  an entry is allowed -- multi-timeframe alignment, a different concept
+  from the ADX regime filter (which measures trend strength, not
+  cross-timeframe directional agreement).
+- **`dynamic_atr_tp`**: scales the ATR take-profit multiple by the current
+  volatility regime (ATR relative to its own 100-bar baseline) -- lets
+  winners run further when volatility is expanding, tightens expectations
+  when it's compressed. Scale factors are hardcoded constants
+  (`ATR_HOT_TP_SCALE=1.3`, `ATR_COLD_TP_SCALE=0.85`), not free parameters,
+  to test whether the MECHANISM helps without adding new curve-fitting
+  surface.
+
+Tested individually and combined, same 26 folds, same raw (no filter) base:
+
+| Variant | Median fold Sharpe | PF | Net P&L | Max DD |
+|---|---|---|---|---|
+| Raw baseline | -0.466 | 0.989 | -6.02% | 33.40% |
+| + weekly trend alignment | -0.605 | 0.992 | -4.36% | 32.09% |
+| + dynamic ATR-scaled TP | -0.383 | 0.984 | -8.49% | 37.10% |
+| + both | -0.566 | 0.990 | -5.15% | 35.10% |
+
+**Neither change restores positive training-fold Sharpe, and neither is
+being iterated on further.** Weekly alignment made the median fold Sharpe
+worse. Dynamic ATR-TP is marginally less negative on Sharpe but worse on
+every other metric (PF, net P&L, drawdown). Per this round's own explicit
+instruction not to overfit: two well-motivated, economically-grounded
+structural ideas were tried once each and reported honestly; continuing to
+mutate the entry/exit logic in an unprincipled loop until some variant
+crosses zero would be exactly the p-hacking this project has consistently
+avoided. **Conclusion: the weak entry signal is not fixable by these two
+interventions; the regime/persistence filter remains the reason the
+deployed flagship survives at all.** Both new fields are kept in the
+codebase (off by default, zero effect on the live daemon) as validated
+infrastructure for future, more fundamental signal-design work -- not
+adopted as a change to what's running.
+
+### Step 3: Fresh-holdout constraint (a hard fact, not a design choice)
+
+Checked the actual cached data range before designing a "fresh, untested"
+window: `data/dukascopy_m5_cache.csv` spans exactly 2018-01-01 to
+2026-08-03. There is no unused historical slice left -- 2018 to 2025-07 is
+the training/fold data, 2025-08 to 2026-07 has now been used as an
+evaluation window in three separate rounds, and the cache's own tail ends
+2026-08-03 (about four weeks of very recent data, already what the live
+paper daemon has been polling forward from via Deriv). **A genuinely fresh
+holdout cannot be carved out of existing history** -- the two real options
+are: (a) extend the Dukascopy cache backward (e.g. 2010-2017) for a
+chronologically-independent-but-older validation window, with the caveat
+that gold's market structure that far back differs meaningfully (much
+lower price levels, different macro regime), or (b) accumulate genuinely
+new forward data via continued paper trading, which takes real calendar
+time to reach adequate sample size. Neither is a quick substitute for the
+already-burned window. This is moot for now regardless, since step 2 didn't
+produce a validated candidate that would need this evaluation yet.
+
+### Step 4: Deployment timeline -- not committing to Oct 5 for new core logic
+
+See chat response for the full schedule and reasoning. Summary: the
+already-deployed flagship (`regime_confirm_bars=3,
+block_adx_transition=False`) remains the only thing with real walk-forward
+validation behind it, and stays live. A hard October 5 go-live date for
+*replacement* core signal logic is not supported by this round's evidence
+-- no variant tested here cleared the training bar. Recommended path is to
+keep paper-testing the current flagship (building real forward sample
+size) while treating core-signal redesign as open-ended research, not a
+30-day deliverable.
