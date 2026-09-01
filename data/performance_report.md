@@ -1841,3 +1841,37 @@ validation behind it, and stays live. A hard October 5 go-live date for
 keep paper-testing the current flagship (building real forward sample
 size) while treating core-signal redesign as open-ended research, not a
 30-day deliverable.
+
+## Fundamental Edge Research Pivot: Data Expansion Script, Alternative Hypotheses (2026-09-01)
+
+Per the decision to drop the Oct 5 deadline and pursue open-ended core-signal
+research instead:
+
+**Data expansion**: `scripts/expand_dukascopy_history.py` -- thin wrapper
+around the existing, already-hardened `fetch_and_cache_range` (same circuit
+breaker, same resumability, no new fetching logic) to extend the XAUUSD
+cache backward from 2018-01-01 toward 2012-01-01, since the actual cached
+range check this round confirmed there's no unused historical window left
+in 2018-2026 (training used 2018-2025-07, the test window has been reused
+3x, cache ends 2026-08-03). **Checked directly before writing this**: a
+plain single-request probe to Dukascopy for 2012-01-02 returned HTTP 429
+in ~0.1s -- we are currently rate-limited. Per this project's established
+policy (see the original circuit-breaker round), no evasion was attempted;
+the script is ready to run once the limit clears, and whether Dukascopy
+actually has XAUUSD history back to 2012 remains unconfirmed either way.
+
+**Alternative core-trigger hypotheses** (for testing once expanded data is
+available -- not implemented this round): see chat response for the full
+proposal and the important caveat that one of the two ideas requested
+(liquidity sweep + FVG) has PARTIAL overlap with `entries_v3.py`'s already-
+failed SMC strategy (holdout PF 0.146) -- that prior test stacked 5
+conditions as a committee (HTF alignment + session filter + liquidity
+sweep + FVG + min RRR simultaneously), so testing the liquidity-sweep+FVG
+concept ALONE, isolated from the other four conditions, is a genuinely
+different experiment, not a rerun of what already failed -- but this
+history should inform how much weight to give a positive-looking result if
+one appears.
+
+**Flagship**: untouched, still running (PID 1239 as of this check, 2+ days
+uptime). Daily diagnostic:
+`launchctl list | grep amaro && python3 scripts/check_telemetry.py`
