@@ -102,6 +102,14 @@ class LowfreqV2Config:
     # controlled A/B toggle, same pattern as use_regime_filter. Default False: every existing
     # caller (including the live paper-trading harness) is unaffected unless explicitly enabled.
     block_adx_transition: bool = False
+    # The actual band block_adx_transition blocks, as CONFIG fields rather than only the
+    # ADX_TRANSITION_LOW/HIGH module constants -- added so a search can sweep threshold
+    # VALUES (e.g. testing whether the band is 20-25 specifically, or a nearby band works
+    # just as well) instead of only toggling the fixed 20-25 band on/off. Defaults to the
+    # module constants, so every existing caller (including block_adx_transition=True
+    # ones) is completely unaffected unless these are explicitly overridden.
+    adx_transition_low: float = ADX_TRANSITION_LOW
+    adx_transition_high: float = ADX_TRANSITION_HIGH
 
     def as_dict(self) -> dict:
         return {
@@ -113,6 +121,8 @@ class LowfreqV2Config:
             "use_regime_filter": self.use_regime_filter,
             "regime_confirm_bars": self.regime_confirm_bars,
             "block_adx_transition": self.block_adx_transition,
+            "adx_transition_low": self.adx_transition_low,
+            "adx_transition_high": self.adx_transition_high,
         }
 
 
@@ -238,7 +248,7 @@ def simulate(h1_candles: List[Candle], daily_candles: List[Candle], config: Lowf
         # warmup bar silently behave as "not blocked."
         if config.block_adx_transition:
             a_val = adx_on_h1[i]
-            if a_val is None or (ADX_TRANSITION_LOW <= a_val <= ADX_TRANSITION_HIGH):
+            if a_val is None or (config.adx_transition_low <= a_val <= config.adx_transition_high):
                 continue
 
         price = c.close

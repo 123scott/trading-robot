@@ -1685,3 +1685,60 @@ under 0.05 even before accounting for that. The currently-deployed
 flagship config (`regime_confirm_bars=3, block_adx_transition=False`)
 remains in place, unchanged, per the explicit anti-overfitting instruction
 this round was run under.
+
+## Second-Round Regime Search: Fixing the Overfitting Failure Modes (2026-08-31)
+
+Follow-up to the 2026-08-30 search, specifically targeting the three
+concrete reasons that round's "winner" was rejected rather than adopted:
+
+1. **`block_adx_transition` was a boolean toggle for a fixed 20-25 band** --
+   a binary flip has only one possible "neighbor," so the cliff check was
+   nearly meaningless. Fixed with a real code change: `LowfreqV2Config`
+   (`src/entries_v2.py`) now carries `adx_transition_low`/
+   `adx_transition_high` as actual config fields (defaulting to the
+   original 20.0/25.0, so every existing caller is unaffected) instead of
+   reading fixed module constants -- verified this doesn't change any
+   existing behavior (the `block_adx_transition=False` path never reads
+   the new fields at all; the `=True` path with default thresholds is
+   arithmetically identical to before) and verified the new fields
+   genuinely change simulated trade counts when swept (881 vs. 1040 vs. 0
+   trades across three test bands on the same data).
+2. **`regime_confirm_bars` was swept at every adjacent integer (1-5)** --
+   adjacent bar-counts mostly overlap the same trades, so "not
+   cliff-sensitive to its immediate neighbor" barely constrained anything.
+   Fixed: this round uses a coarser, more separated grid ([2, 4, 6, 8]).
+3. **Selection scored by bare median fold Sharpe**, which doesn't penalize
+   a candidate that's flat-to-bad on most folds and spectacular on one or
+   two. Fixed: new scoring is `median_sharpe - 0.5 * IQR(fold_sharpes)`,
+   so cross-fold dispersion is now directly penalized.
+
+New script: `src/lowfreq_v2_regime_search_v2.py`. Same 26 purged/embargoed
+training folds as before (2018-01-01 to 2025-07-31 -- already regime-diverse
+by construction: COVID, the 2022 bear run, multiple ranging years, the
+recent rally). Structural params still held fixed at the already-locked
+values, same staged-search rationale as before. Grid: `regime_confirm_bars`
+in [2,4,6,8] x `adx_band` in [none, 15-25, 20-25, 20-30, 15-30] = 20 combos.
+
+**Training result: still no genuine positive signal.** Every combo scored a
+negative stability score; the two best-RANKED candidates
+(confirm_bars=4/adx_band=20-30 and confirm_bars=2/adx_band=20-25) were both
+correctly caught and rejected by the new cliff check -- each had at least
+one adjacent parameter value (an adjacent ADX band, in both cases) whose
+score collapsed hard, exactly the "steep performance cliff" pattern this
+round was told to reject. The eventual stable pick (confirm_bars=8,
+no ADX block) is the least-bad option that survives the cliff check, still
+clearly negative (median Sharpe -0.337, stability score -1.080).
+
+**Test-window evaluation (2025-08-01/2026-07-31) was deliberately NOT run
+this round.** The script requires an explicit `--evaluate-test-window` flag
+for that step precisely so a 4th touch of that window doesn't happen by
+default -- and since nothing here cleared the training bar in any
+meaningful sense, there's no genuine candidate to justify spending another
+look at an already-three-times-reused window. This is itself evidence
+worth taking seriously: a harder-to-fool search (real threshold sweeps,
+coarser spacing, dispersion-penalized scoring) did not surface anything
+better than the currently-deployed config -- it reinforces, rather than
+overturns, the prior conclusion that the earlier round's apparent win was
+most likely the test window's own strong trending regime, not
+parameter-specific edge. The live daemon's config remains unchanged
+(`regime_confirm_bars=3, block_adx_transition=False`).
