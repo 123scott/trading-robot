@@ -1,0 +1,65 @@
+2026-09-02 02:29:41 INFO    Poll complete: no newly-closed trades.
+2026-09-02 02:40:03 INFO    Received SIGTERM -- shutting down cleanly (state already saved after each poll; nothing lost).
+2026-09-02 02:40:03 INFO    Daemon stopped. Final state saved.
+2026-09-02 02:43:05 INFO    Loaded prior state: 6 trades, last_seen_bar=2026-08-27T15:00:00+00:00
+2026-09-02 02:43:05 INFO    Starting paper daemon: symbol=XAUUSD_DERIV notional=10000.0 poll_seconds=1800.0
+2026-09-02 02:43:05 INFO    Config: {'trend_sma_period': 50, 'pullback_ema_period': 21, 'pullback_tolerance_pct': 0.2, 'atr_sl_mult': 2.0, 'atr_tp_mult': 2.5, 'use_regime_filter': True, 'regime_confirm_bars': 3, 'block_adx_transition': False, 'adx_transition_low': 20.0, 'adx_transition_high': 25.0, 'require_weekly_trend_alignment': False, 'weekly_trend_sma_period': 10, 'dynamic_atr_tp': False, 'atr_baseline_period': 100}
+2026-09-02 02:43:05 INFO    Cost model: spread=$0.40, slippage=$0.05/side (mandatory, per task spec)
+2026-09-02 02:43:07 INFO    Poll complete: no newly-closed trades.
+2026-09-02 03:13:09 INFO    Poll complete: no newly-closed trades.
+2026-09-02 03:43:11 INFO    Poll complete: no newly-closed trades.
+2026-09-02 04:13:12 INFO    Poll complete: no newly-closed trades.
+2026-09-02 04:43:14 INFO    Poll complete: no newly-closed trades.
+2026-09-02 05:13:16 INFO    Poll complete: no newly-closed trades.
+2026-09-02 05:43:18 INFO    Poll complete: no newly-closed trades.
+2026-09-02 06:13:19 INFO    Poll complete: no newly-closed trades.
+2026-09-02 06:43:21 INFO    Poll complete: no newly-closed trades.
+2026-09-02 07:13:23 INFO    Poll complete: no newly-closed trades.
+2026-09-02 07:43:25 INFO    Poll complete: no newly-closed trades.
+2026-09-02 08:13:26 INFO    Poll complete: no newly-closed trades.
+2026-09-02 08:43:28 INFO    Poll complete: no newly-closed trades.
+2026-09-02 09:13:30 INFO    Poll complete: no newly-closed trades.
+2026-09-02 09:43:31 INFO    Poll complete: no newly-closed trades.
+2026-09-02 10:13:34 INFO    Poll complete: no newly-closed trades.
+2026-09-02 10:43:36 INFO    Poll complete: no newly-closed trades.
+2026-09-02 11:13:37 INFO    Poll complete: no newly-closed trades.
+2026-09-02 11:43:39 INFO    Poll complete: no newly-closed trades.
+2026-09-02 12:13:41 INFO    Poll complete: no newly-closed trades.
+2026-09-02 12:43:42 INFO    Poll complete: no newly-closed trades.
+2026-09-02 13:13:44 INFO    Poll complete: no newly-closed trades.
+2026-09-02 13:43:46 INFO    Poll complete: no newly-closed trades.
+2026-09-02 14:13:48 INFO    Poll complete: no newly-closed trades.
+2026-09-02 14:43:49 INFO    Poll complete: no newly-closed trades.
+2026-09-02 15:13:51 INFO    Poll complete: no newly-closed trades.
+2026-09-02 15:43:53 INFO    Poll complete: no newly-closed trades.
+2026-09-02 16:13:55 INFO    Poll complete: no newly-closed trades.
+2026-09-02 17:13:00 INFO    Poll complete: no newly-closed trades.
+2026-09-02 20:39:36 WARNING Poll failed (attempt 1): TimeoutError: timed out during opening handshake -- retrying in 5.8s.
+2026-09-02 20:39:43 INFO    Poll complete: no newly-closed trades.
+2026-09-02 21:09:48 INFO    Poll complete: no newly-closed trades.
+2026-09-02 21:39:50 INFO    Poll complete: no newly-closed trades.
+2026-09-02 22:09:52 INFO    Poll complete: no newly-closed trades.
+2026-09-02 22:39:53 INFO    Poll complete: no newly-closed trades.
+2026-09-02 23:09:55 INFO    Poll complete: no newly-closed trades.
+2026-09-02 23:39:56 INFO    Poll complete: no newly-closed trades.
+2026-09-03 00:09:58 INFO    Poll complete: no newly-closed trades.
+2026-09-03 00:40:13 WARNING Poll failed (attempt 1): TimeoutError: timed out during opening handshake -- retrying in 5.5s.
+2026-09-03 00:40:34 WARNING Poll failed (attempt 2): TimeoutError: timed out during opening handshake -- retrying in 8.6s.
+2026-09-03 00:40:57 WARNING Poll failed (attempt 3): TimeoutError: timed out during opening handshake -- retrying in 22.1s.
+2026-09-03 00:41:34 WARNING Poll failed (attempt 4): TimeoutError: timed out during opening handshake -- retrying in 33.6s.
+2026-09-03 00:42:23 WARNING Poll failed (attempt 5): TimeoutError: timed out during opening handshake -- retrying in 69.9s.
+2026-09-03 00:43:48 WARNING Poll failed (attempt 6): TimeoutError: timed out during opening handshake -- retrying in 175.9s.
+2026-09-03 00:46:59 WARNING Poll failed (attempt 7): TimeoutError: timed out during opening handshake -- retrying in 355.1s.
+2026-09-03 00:53:09 WARNING Poll failed (attempt 8): TimeoutError: timed out during opening handshake -- retrying in 306.9s.
+2026-09-03 00:58:31 WARNING Poll failed (attempt 9): TimeoutError: timed out during opening handshake -- retrying in 297.3s.
+2026-09-03 01:03:43 WARNING Poll failed (attempt 10): TimeoutError: timed out during opening handshake -- retrying in 254.2s.
+2026-09-03 01:08:12 WARNING Poll failed (attempt 11): TimeoutError: timed out during opening handshake -- retrying in 353.2s.
+2026-09-03 01:14:21 WARNING Poll failed (attempt 12): TimeoutError: timed out during opening handshake -- retrying in 328.9s.
+2026-09-03 01:19:51 INFO    Poll complete: no newly-closed trades.
+2026-09-03 01:50:06 WARNING Poll failed (attempt 1): TimeoutError: timed out during opening handshake -- retrying in 4.6s.
+2026-09-03 01:50:26 WARNING Poll failed (attempt 2): TimeoutError: timed out during opening handshake -- retrying in 8.4s.
+2026-09-03 01:50:49 WARNING Poll failed (attempt 3): TimeoutError: timed out during opening handshake -- retrying in 20.1s.
+2026-09-03 01:51:10 WARNING Poll failed (attempt 4): gaierror: [Errno 8] nodename nor servname provided, or not known -- retrying in 33.0s.
+2026-09-03 01:51:43 WARNING Poll failed (attempt 5): gaierror: [Errno 8] nodename nor servname provided, or not known -- retrying in 91.5s.
+2026-09-03 01:53:14 WARNING Poll failed (attempt 6): gaierror: [Errno 8] nodename nor servname provided, or not known -- retrying in 156.5s.
+2026-09-03 01:55:51 WARNING Poll failed (attempt 7): gaierror: [Errno 8] nodename nor servname provided, or not known -- retrying in 264.6s.
