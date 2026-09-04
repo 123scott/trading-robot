@@ -1875,3 +1875,47 @@ one appears.
 **Flagship**: untouched, still running (PID 1239 as of this check, 2+ days
 uptime). Daily diagnostic:
 `launchctl list | grep amaro && python3 scripts/check_telemetry.py`
+
+## Hypothesis 2 Implementation: Session Order Blocks (2026-09-04)
+
+`src/entries_v4_session_ob.py` -- Hypothesis 2 from the 2026-09-01 pivot,
+implemented and isolated per the "zero post-entry indicators or regime
+filters" instruction. Mechanical, fully-specified order-block definition
+(not vague pattern-matching): a bullish OB is the last down-closing H4
+candle before the immediately next H4 candle closes decisively above its
+high (gated by `displacement_atr_mult` against that candle's own H4 ATR),
+restricted to candles whose open falls inside a configurable session
+window (default 07:00-10:00 UTC, London open). H1 execution: the first H1
+bar that re-enters a confirmed zone and closes back in the displacement's
+direction triggers one entry per zone; unmitigated zones expire after
+`ob_zone_expiry_bars`. Exit uses the same fixed ATR SL/TP convention as
+`entries_v2.py`, deliberately unchanged, so this experiment isolates the
+entry signal as the only new variable.
+
+**One real bug caught and fixed during smoke-testing, not left for later**:
+the initial default `ob_zone_expiry_bars=40` (~1.7 days) produced zero
+trades across an entire year of 2018 data. Checked directly rather than
+assumed broken: the first confirmed order block that year wasn't touched
+by price again until 89 H1 bars (~3.7 days) later. Fixed the default to
+300 bars (~12.5 days), verified non-zero, sane trade counts followed.
+
+**Full smoke test against the currently-cached 2018-2025-07 range (NOT the
+real evaluation -- that waits for the 2012-2018 expansion, still fetching
+in the background)**: 43 pooled trades across all 26 folds, win rate
+34.9%, PF 0.943, net P&L -0.66%, most individual folds too sparse (<3
+trades) to score. This confirms the hypothesis produces a genuinely rare
+signal under this strict session+displacement definition -- not enough
+volume on the current dataset to draw any conclusion either way, which is
+exactly the gap the 2012-2018 expansion is meant to fill. `run_walk_forward_folds()`
+is a drop-in analog of `lowfreq_v2_eval.py`'s fold/scoring pairing, ready
+to run against the expanded cache as soon as it's populated -- no further
+wiring needed.
+
+## Dukascopy History Expansion -- Kicked Off (2026-09-04)
+
+`scripts/expand_dukascopy_history.py` launched in the background (PID
+37604, `nohup ... > logs/dukascopy_expansion.log 2>&1 &`) targeting
+2012-01-01 to 2018-01-01 (45,096 hours to check). Long-running by design
+(chunk-level logging only, every 150 hours); safe to interrupt and resume.
+Check progress with `tail -f logs/dukascopy_expansion.log` or
+`ps -p 37604`.
