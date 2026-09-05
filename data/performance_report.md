@@ -1919,3 +1919,55 @@ wiring needed.
 (chunk-level logging only, every 150 hours); safe to interrupt and resume.
 Check progress with `tail -f logs/dukascopy_expansion.log` or
 `ps -p 37604`.
+
+## Hypothesis 2 on the Fresh 2012-2017 Fold Set (2026-09-05)
+
+The 2012-2018 Dukascopy expansion finished (32,206 hours with ticks, 8,156
+market-closed, 4,734 ERROR hours ~10.5% -- transient rate-limit failures,
+retryable; a `scripts/refill_dukascopy_errors.py` pass was started in the
+background to close them, and this evaluation should be re-run once it
+completes). Cache now spans 2012-01-02 to 2026-08-03. Evaluation script:
+`src/eval_v4_fresh_folds.py` -- 19 walk-forward folds inside 2012-01-01 ..
+2017-12-31, same 12mo/3mo/slide-3mo construction as everywhere else, a
+period no strategy in this project has ever been fit to or evaluated on.
+It also runs entries_v2's raw trigger on the SAME folds, since the -0.466
+baseline was measured on 2018-2025 folds and a cross-period comparison
+would be apples-to-oranges.
+
+| | Hypothesis 2 (session OB, zero filters) | Baseline raw trigger, same folds |
+|---|---|---|
+| Pooled trades | 34 | 1235 |
+| Win rate | 50.0% | 44.0% |
+| Profit factor | 1.837 | 0.941 |
+| Net P&L | +5.93% | -22.19% |
+| Max drawdown | 3.03% | 26.59% |
+| Median fold Sharpe | 0.000 (artifact: 13/19 folds had <3 trades) | -0.690 |
+
+**Significance on the 34 Hypothesis-2 trades:** t=1.609, **p=0.117** (not
+significant at 5%); bootstrap 95% CI for net P&L **[-1.27%, +13.04%]**
+(spans zero); P(loss)=5.6%. Not concentrated in one trade (largest win is
+10% of gross profit; net is still +4.67% with it removed); exits split
+17 TP / 17 SL; positive in 4 of 5 entry years (2015 negative); ~7 trades
+per year -- a genuinely sparse signal.
+
+**Cross-period check that materially weakens the case:** the identical
+configuration on the 2018-2025-07 folds (smoke test, 2026-09-04) was 43
+trades, PF 0.943, net -0.66%. Same strategy, two independent periods,
+opposite sign, neither individually significant.
+
+**Verdict, stated plainly:** session order blocks are unambiguously better
+than the pullback baseline on identical fresh data (every metric, by a
+wide margin), and the 2012-2017 numbers are encouraging in direction --
+but this does NOT yet demonstrate a genuine statistical edge. p=0.117
+means a result this good arises ~12% of the time from a zero-edge
+strategy, the confidence interval includes losing, the sample is 34
+trades, and the sign flipped on 2018-2025. Honest classification:
+inconclusive / worth pursuing, not validated. The median-fold-Sharpe
+scoring framework is not informative for a signal this sparse -- the
+pooled metrics plus significance test are the right read, and any future
+comparison for v4 should use those.
+
+Next: re-run after the ERROR-hour refill closes the ~10% data gaps (which
+also affect H4 order-block detection), then decide whether to widen the
+signal (e.g. a second session window) -- as a pre-registered change, not
+a tuned one -- to get sample size up.
