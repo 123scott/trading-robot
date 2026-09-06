@@ -43,6 +43,11 @@ class CostProfile:
 # any backtest for real capital.
 COST_PROFILES = {
     "BTCUSDT":      CostProfile(spread=5.00,             slippage_pct=0.0005, commission_pct=0.0010),
+    # EURUSD added 2026-09-06 for the cross-asset session-order-block test. 1.0 pip is the
+    # tightest of the majors and slightly tighter than GBPUSD's 1.5 below, which is the
+    # correct relative ordering for retail majors -- same illustrative basis as every other
+    # row here, NOT broker-verified.
+    "EURUSD":       CostProfile(spread=0.00010,          slippage_pct=0.0001, commission_pct=0.00005),
     "GBPUSD":       CostProfile(spread=0.00015,          slippage_pct=0.0001, commission_pct=0.00005),
     "USDJPY":       CostProfile(spread=0.015,            slippage_pct=0.0001, commission_pct=0.00005),
     "XAUUSD":       CostProfile(spread=0.35,             slippage_pct=0.0001, commission_pct=0.00010),
